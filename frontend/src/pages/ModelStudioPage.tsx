@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input, Label, Select, Textarea } from '@/components/ui/Input';
 import { Table, TBody, TD, TH, THeader, TR } from '@/components/ui/Table';
+import { formatTime } from '@/lib/utils';
 
 type Tab = 'types' | 'shared' | 'links' | 'actions' | 'rules' | 'functions' | 'interfaces' | 'automations';
 const TABS: Array<{ key: Tab; label: string }> = [
@@ -217,7 +218,9 @@ type ObjectType = {
   createdAt?: string; updatedAt?: string;
   definition: { properties: Property[]; displayProperty?: string; titleTemplate?: string; searchFields?: string[] };
   publishedDefinition: { properties: Property[] };
-  versions: Array<{ schemaVersion: number; state: string; changeNote: string }>;
+  versions: Array<{ schemaVersion: number; state: string; changeNote: string;
+    createdBy?: string; createdAt?: string; publishedAt?: string;
+    definition: { properties: Property[] } }>;
 };
 type InterfaceDef = { interfaceKey: string; displayName: string; description: string; properties: Array<{ name: string; type: string; required?: boolean }>; capabilities: string[] };
 
@@ -818,6 +821,7 @@ export function ModelModuleDetailPage() {
 }
 
 function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit: boolean; canDelete: boolean }) {
+  const [activeTab, setActiveTab] = useState<'basic' | 'properties' | 'versions'>('properties');
   const [interfaces, setInterfaces] = useState<InterfaceDef[]>([]);
   const [functions, setFunctions] = useState<FunctionDef[]>([]);
   const [sharedProperties, setSharedProperties] = useState<SharedProperty[]>([]);
@@ -833,6 +837,7 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
   const [displayProperty, setDisplayProperty] = useState('');
   const [titleTemplate, setTitleTemplate] = useState('');
   const [migration, setMigration] = useState('{}');
+  const [rollbackMigration, setRollbackMigration] = useState('{}');
   const [rollbackVersion, setRollbackVersion] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -968,7 +973,17 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
     <div className="space-y-4"><Notice error={error} info={info} />
       {selected ? <Card><CardHeader><CardTitle>编辑 {selected.typeKey}</CardTitle></CardHeader>
         <CardContent className="space-y-5">
-          <section className="space-y-3" aria-labelledby="type-properties-title">
+          <div role="tablist" aria-label="对象类型详情" className="flex flex-wrap gap-2 border-b border-border pb-3">
+            {([
+              ['basic', '基本信息'], ['properties', '属性管理'], ['versions', '历史版本'],
+            ] as const).map(([tab, label]) => <Button key={tab} role="tab" id={`type-tab-${tab}`}
+              aria-selected={activeTab === tab} aria-controls={`type-panel-${tab}`}
+              variant={activeTab === tab ? 'primary' : 'outline'}
+              onClick={() => setActiveTab(tab)}>{label}</Button>)}
+          </div>
+          <section id="type-panel-properties" role="tabpanel" hidden={activeTab !== 'properties'}
+            aria-labelledby="type-tab-properties" className="space-y-5">
+          <div className="space-y-3" aria-labelledby="type-properties-title">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div><h3 id="type-properties-title" className="font-semibold">属性列表 <span className="text-muted-foreground">({properties.length})</span></h3>
                 <p className="text-xs text-muted-foreground">添加、修改或移除后，保存并发布类型版本才会生效。</p></div>
@@ -1016,15 +1031,34 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
                 }) : <TR><TD colSpan={6} className="py-8 text-center text-muted-foreground">暂无属性，点击“添加属性”或“引用共享属性”</TD></TR>}</TBody>
               </Table>
             </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="标题字段" value={displayProperty} onChange={setDisplayProperty} disabled={!canEdit} />
+            <Field label="标题模板" value={titleTemplate} onChange={setTitleTemplate} disabled={!canEdit} placeholder="例如 {name}" />
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <Field label="版本说明" value={note} onChange={setNote} disabled={!canEdit} />
+            <JsonField label="迁移规则（删除或更改属性时填写）" value={migration} onChange={setMigration} rows={3} />
+          </div>
+          {canEdit && <div className="flex flex-wrap gap-2">
+            <Button disabled={busy} onClick={() => run('创建属性版本', () => api.post(`/ontology/types/${encodeURIComponent(key)}/versions`, {
+              definition: definition(), changeNote: note, migration: parseJson(migration, '迁移规则'),
+            }), true)}>保存属性为新版本</Button>
+            {canDelete && <Button variant="secondary" disabled={busy || !latest || latest.state === 'published'} onClick={() => run('发布版本',
+              () => api.post(`/ontology/types/${encodeURIComponent(key)}/publish-version`, {
+                schemaVersion: latest?.schemaVersion, migration: parseJson(migration, '迁移规则'),
+              }), true)}>发布 v{latest?.schemaVersion || selected.currentVersion}</Button>}
+          </div>}
+          <p className="text-xs text-muted-foreground">当前版本：v{selected.currentVersion} · {selected.state}</p>
           </section>
-          <div className="border-t border-border pt-4"><h3 className="mb-3 font-semibold">类型基本信息</h3>
+          <section id="type-panel-basic" role="tabpanel" hidden={activeTab !== 'basic'}
+            aria-labelledby="type-tab-basic" className="space-y-5">
+          <div><h3 className="mb-3 font-semibold">类型基本信息</h3>
           <div className="grid gap-3 md:grid-cols-2">
             <Field label="类型标识" value={key} onChange={setKey} disabled required />
             <Field label="显示名称" value={name} onChange={setName} disabled={!canEdit} required />
             <TypeCategorySelect value={category} onChange={setCategory} disabled={!canEdit} />
             <Field label="说明" value={description} onChange={setDescription} disabled={!canEdit} />
-            <Field label="标题字段" value={displayProperty} onChange={setDisplayProperty} disabled={!canEdit} />
-            <Field label="标题模板" value={titleTemplate} onChange={setTitleTemplate} disabled={!canEdit} placeholder="例如 {name}" />
           </div>
           <div><Label>实现的 Interface</Label><div className="mt-2 flex flex-wrap gap-3">
             {interfaces.map((item) => <label key={item.interfaceKey} className="flex items-center gap-2 text-sm">
@@ -1035,23 +1069,25 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
           {unpublishedInterfaces.length > 0 && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
             {unpublishedInterfaces.join('、')} 的属性尚未发布，请先保存属性版本并发布，然后保存基本信息。
           </p>}</div></div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <Field label="版本说明" value={note} onChange={setNote} disabled={!canEdit} />
-            <JsonField label="迁移规则（删除或更改属性时填写）" value={migration} onChange={setMigration} rows={3} />
+          {canEdit && <Button variant="outline" disabled={busy || unpublishedInterfaces.length > 0} onClick={() => run('保存基本信息',
+            () => api.patch(`/ontology/types/${encodeURIComponent(key)}`, { displayName: name, category, description, interfaces: implemented }))}>保存基本信息</Button>}
+          </section>
+          <section id="type-panel-versions" role="tabpanel" hidden={activeTab !== 'versions'}
+            aria-labelledby="type-tab-versions" className="space-y-5">
+          <div><h3 className="font-semibold">历史版本</h3>
+            <p className="text-xs text-muted-foreground">回滚会以历史定义创建并发布一个新版本，保留原有版本记录。</p></div>
+          <div className="overflow-x-auto rounded-md border border-border">
+            <Table><THeader><TR><TH>版本</TH><TH>状态</TH><TH>属性数</TH><TH>版本说明</TH><TH>创建人</TH><TH>创建时间</TH><TH>发布时间</TH></TR></THeader>
+              <TBody>{selected.versions.map((version) => <TR key={version.schemaVersion}>
+                <TD className="font-medium">v{version.schemaVersion}</TD><TD>{version.state}</TD>
+                <TD>{version.definition.properties.length}</TD><TD>{version.changeNote || '—'}</TD>
+                <TD>{version.createdBy || '—'}</TD><TD>{formatTime(version.createdAt)}</TD>
+                <TD>{formatTime(version.publishedAt)}</TD>
+              </TR>)}</TBody></Table>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {canEdit && <><Button variant="outline" disabled={busy || unpublishedInterfaces.length > 0} onClick={() => run('保存基本信息',
-              () => api.patch(`/ontology/types/${encodeURIComponent(key)}`, { displayName: name, category, description, interfaces: implemented }))}>保存基本信息</Button>
-              <Button disabled={busy} onClick={() => run('创建属性版本', () => api.post(`/ontology/types/${encodeURIComponent(key)}/versions`, {
-                definition: definition(), changeNote: note, migration: parseJson(migration, '迁移规则'),
-              }), true)}>保存属性为新版本</Button>
-              {canDelete && <Button variant="secondary" disabled={busy || !latest || latest.state === 'published'} onClick={() => run('发布版本',
-                () => api.post(`/ontology/types/${encodeURIComponent(key)}/publish-version`, {
-                  schemaVersion: latest?.schemaVersion, migration: parseJson(migration, '迁移规则'),
-                }), true)}>发布 v{latest?.schemaVersion || selected?.currentVersion}</Button>}</>}
-          </div>
-          <div className="text-xs text-muted-foreground">版本：{selected?.versions.map((v) => `v${v.schemaVersion} ${v.state}`).join(' · ')}</div>
-          {canDelete && selected && <div className="flex flex-wrap items-end gap-2">
+          {canDelete && <div className="space-y-3 border-t border-border pt-4">
+            <JsonField label="回滚迁移规则（删除或更改属性时填写）" value={rollbackMigration} onChange={setRollbackMigration} rows={3} />
+            <div className="flex flex-wrap items-end gap-2">
             <div><Label htmlFor="rollback-version">回滚到历史定义</Label>
               <Select id="rollback-version" value={rollbackVersion} onChange={(event) => setRollbackVersion(event.target.value)}>
                 <option value="">选择历史版本</option>
@@ -1060,9 +1096,11 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
               </Select></div>
             <Button variant="outline" disabled={busy || !rollbackVersion} onClick={() => run('回滚模型', () =>
               api.post(`/ontology/types/${encodeURIComponent(key)}/rollback`, {
-                schemaVersion: Number(rollbackVersion), migration: parseJson(migration, '迁移规则'),
+                schemaVersion: Number(rollbackVersion), migration: parseJson(rollbackMigration, '迁移规则'),
               }))}>发布回滚版本</Button>
+            </div>
           </div>}
+          </section>
         </CardContent></Card> : !error && <Card><CardContent className="pt-5 text-sm text-muted-foreground">正在加载对象类型…</CardContent></Card>}
       <PropertyEditorDialog editor={propertyEditor} onClose={() => setPropertyEditor(null)} onSave={saveProperty}
         functions={functions} availableProperties={properties} />
