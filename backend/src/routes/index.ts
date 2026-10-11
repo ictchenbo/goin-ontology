@@ -314,6 +314,7 @@ apiRouter.patch('/objects/:objectId', requireAuth, asyncHandler((req, res) => {
   res.json(updateObject({
     objectId: req.params.objectId,
     payload,
+    title: req.body.title,
     expectedRevision: req.body.expectedRevision,
     actor: req.user!.username,
     reason: req.body.reason,

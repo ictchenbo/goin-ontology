@@ -32,6 +32,7 @@ interface RejectedRow {
   raw?: Record<string, unknown>;
   rawJson?: Record<string, unknown>;
 }
+type IngestType = { typeKey: string; displayName: string; state: string };
 
 export function IngestPage() {
   const { hasRole } = useAuth();
@@ -44,6 +45,8 @@ export function IngestPage() {
   const [rejectedRows, setRejectedRows] = useState<RejectedRow[]>([]);
   const [sourceName, setSourceName] = useState('demo-source');
   const [targetType, setTargetType] = useState('Supplier');
+  const [types, setTypes] = useState<IngestType[]>([]);
+  const [matchKeys, setMatchKeys] = useState('code');
   const [format, setFormat] = useState('csv');
   const [content, setContent] = useState(
     'code,name,status\nSUP-001,华东供应,qualified\nSUP-002,西部供应,pending'
@@ -64,8 +67,23 @@ export function IngestPage() {
   }
 
   useEffect(() => {
-    load();
+    void load();
+    void api.get<{ items: IngestType[] }>('/ontology/types').then((result) => {
+      const published = result.items.filter((item) => item.state === 'published');
+      setTypes(published);
+      if (!published.some((item) => item.typeKey === targetType)) setTargetType(published[0]?.typeKey ?? '');
+    }).catch((failure: ApiError) => setError(failure.message || '加载对象类型失败'));
   }, []);
+  useEffect(() => {
+    if (!targetType) return;
+    void api.get<{ publishedDefinition: { properties: Array<{ name: string; required?: boolean }> } }>(
+      `/ontology/types/${encodeURIComponent(targetType)}`).then((type) => {
+      const names = type.publishedDefinition.properties.map((property) => property.name);
+      setFieldMap(JSON.stringify(Object.fromEntries(names.map((name) => [name, name])), null, 2));
+      setMatchKeys(names.find((name) => /^(id|code)$|(?:Id|Code|_id|_code)$/.test(name)) ?? '');
+      setContent((current) => current ? current : format === 'json' ? '[\n  {}\n]' : names.join(',') + '\n');
+    }).catch((failure: ApiError) => setError(failure.message || '加载类型属性失败'));
+  }, [targetType]);
 
   /**
    * 提交导入：
@@ -90,6 +108,11 @@ export function IngestPage() {
         setError('数据内容不能为空');
         return;
       }
+      if (!targetType) { setError('请选择目标类型'); return; }
+      const keys = matchKeys.split(',').map((key) => key.trim()).filter(Boolean);
+      if (keys.some((key) => !fieldMapObj[key])) {
+        setError('匹配键必须是字段映射中的源字段名'); return;
+      }
 
       // 按格式构造请求体：CSV 传 csv 文本，JSON 解析为 rows 数组
       const body: Record<string, unknown> = {
@@ -97,7 +120,7 @@ export function IngestPage() {
         mapping: {
           typeKey: targetType,
           fieldMap: fieldMapObj,
-          matchKeys: ['code'],
+          matchKeys: keys,
           sourceKey: sourceName || 'upload',
         },
       };
@@ -190,11 +213,12 @@ export function IngestPage() {
               </div>
               <div>
                 <Label htmlFor="targetType">目标类型</Label>
-                <Select id="targetType" value={targetType} onChange={(e) => setTargetType(e.target.value)}>
-                  <option value="Supplier">Supplier</option>
-                  <option value="Facility">Facility</option>
-                  <option value="ObservedEvent">ObservedEvent</option>
-                  <option value="IntelReport">IntelReport</option>
+                <Select id="targetType" value={targetType} onChange={(e) => {
+                  setTargetType(e.target.value); setContent('');
+                }}>
+                  {!types.length && <option value="">暂无已发布类型</option>}
+                  {types.map((type) => <option key={type.typeKey} value={type.typeKey}>
+                    {type.displayName} ({type.typeKey})</option>)}
                 </Select>
               </div>
               <div>
@@ -205,6 +229,9 @@ export function IngestPage() {
                 </Select>
               </div>
             </div>
+            <div><Label htmlFor="matchKeys">匹配键（源字段名，逗号分隔；留空则仅按来源记录去重）</Label>
+              <Input id="matchKeys" value={matchKeys} onChange={(event) => setMatchKeys(event.target.value)}
+                placeholder="例如 readingId" /></div>
             <div>
               <Label htmlFor="content">数据内容</Label>
               <Textarea

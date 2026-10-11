@@ -115,7 +115,7 @@ export function ModelStudioPage() {
 
 type Automation = {
   id: string; name: string; enabled: boolean;
-  condition: { typeKey: string; expression: string };
+  condition: { typeKey: string; expression: string; ruleKey?: string };
   effect: Record<string, unknown>;
 };
 
@@ -126,15 +126,20 @@ function AutomationManager({ initialKey, canEdit }: { initialKey: string; canEdi
   const [name, setName] = useState('');
   const [typeKey, setTypeKey] = useState('ObservedEvent');
   const [expression, setExpression] = useState('object.verificationStatus == "unverified"');
+  const [ruleKey, setRuleKey] = useState('');
+  const [triggerRules, setTriggerRules] = useState<Array<{ ruleKey: string; name: string; scopeType: string;
+    expression: string }>>([]);
   const [effect, setEffect] = useState('{"type":"create_review_request","taskTypeKey":"ReviewRequest","title":"待人工核查"}');
   const [enabled, setEnabled] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const refresh = useCallback(async () => {
-    const [ruleResponse, runResponse] = await Promise.all([
+    const [ruleResponse, runResponse, triggerResponse] = await Promise.all([
       api.get<{ items: Automation[] }>('/automations'),
       api.get<{ items: Array<{ id: string; ruleId: string; status: string; objectId: string }> }>('/automations/runs'),
+      api.get<{ items: Array<{ ruleKey: string; name: string; scopeType: string; expression: string }> }>('/rules?kind=trigger'),
     ]);
+    setTriggerRules(triggerResponse.items);
     if (initialKey !== 'new') {
       const selected = ruleResponse.items.find((rule) => rule.id === initialKey);
       if (!selected) throw new Error(`自动化规则不存在: ${initialKey}`);
@@ -145,13 +150,15 @@ function AutomationManager({ initialKey, canEdit }: { initialKey: string; canEdi
   useEffect(() => { void refresh().catch((e) => setError(message(e))); }, [refresh]);
   function edit(rule: Automation) {
     setId(rule.id); setName(rule.name); setTypeKey(rule.condition.typeKey);
-    setExpression(rule.condition.expression); setEffect(json(rule.effect)); setEnabled(rule.enabled);
+    setExpression(rule.condition.expression); setRuleKey(rule.condition.ruleKey ?? '');
+    setEffect(json(rule.effect)); setEnabled(rule.enabled);
   }
   async function save() {
     setError(null); setInfo(null);
     try {
       const saved = await api.post<Automation>('/automations', { ...(id ? { id } : {}), name, typeKey,
-        expression, effect: parseJson(effect, '效果配置'), enabled });
+        expression: ruleKey ? undefined : expression, ruleKey: ruleKey || undefined,
+        effect: parseJson(effect, '效果配置'), enabled });
       await refresh();
       setInfo('自动化规则已保存');
       if (initialKey === 'new') navigate(`/ontology/automations/${encodeURIComponent(saved.id)}`);
@@ -160,11 +167,19 @@ function AutomationManager({ initialKey, canEdit }: { initialKey: string; canEdi
   return <div className="space-y-4">
     <Notice error={error} info={info} />
     <Card><CardHeader><CardTitle>{initialKey === 'new' ? '新建自动化规则' : `编辑 ${initialKey}`}</CardTitle></CardHeader><CardContent className="space-y-3">
-      <p className="text-sm text-muted-foreground">触发结果限于创建案例或人工核查请求；表达式采用受限 DSL。</p>
+      <p className="text-sm text-muted-foreground">可引用已发布的触发规则；效果可创建案例、人工核查请求，或执行显式允许自动化的低影响 Action。</p>
       <div className="grid gap-3 md:grid-cols-2"><Field label="规则名称" value={name} onChange={setName} disabled={!canEdit} required />
         <Field label="对象类型" value={typeKey} onChange={setTypeKey} disabled={!canEdit} required /></div>
-      <Field label="条件表达式" value={expression} onChange={setExpression} disabled={!canEdit} required />
+      <div className="space-y-1"><Label htmlFor="automation-rule">触发规则</Label>
+        <Select id="automation-rule" value={ruleKey} disabled={!canEdit} onChange={(event) => setRuleKey(event.target.value)}>
+          <option value="">自定义表达式</option>
+          {triggerRules.filter((rule) => !rule.scopeType || rule.scopeType === typeKey).map((rule) =>
+            <option key={rule.ruleKey} value={rule.ruleKey}>{rule.name} ({rule.ruleKey})</option>)}
+        </Select></div>
+      <Field label="条件表达式" value={ruleKey ? triggerRules.find((rule) => rule.ruleKey === ruleKey)?.expression ?? '' : expression}
+        onChange={setExpression} disabled={!canEdit || !!ruleKey} required={!ruleKey} />
       <JsonField label="效果配置 JSON" value={effect} onChange={setEffect} rows={4} />
+      <p className="text-xs text-muted-foreground">Action 效果示例：{`{"type":"execute_action","actionKey":"mark_review","params":{"reason":"${'${object.reason}'}"}}`}；系统自动传入触发对象 ID。</p>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={enabled}
         disabled={!canEdit} onChange={(event) => setEnabled(event.target.checked)} />启用</label>
       {canEdit && <Button onClick={() => void save()}>保存规则</Button>}
@@ -534,9 +549,10 @@ function ModelModuleList({ tab, canEdit, canDelete }: {
     if (tab === 'links' || tab === 'interfaces') {
       await api.patch(`${config.endpoint}/${key}`, { displayName: name, description });
     } else if (tab === 'automations') {
-      const condition = editing.condition as { typeKey: string; expression: string };
+      const condition = editing.condition as { typeKey: string; expression: string; ruleKey?: string };
       await api.post(config.endpoint, { id: editing.id, name, typeKey: condition.typeKey,
-        expression: condition.expression, effect: editing.effect, enabled: editing.enabled });
+        expression: condition.expression, ruleKey: condition.ruleKey || undefined,
+        effect: editing.effect, enabled: editing.enabled });
     } else {
       await api.post(config.endpoint, { ...editing, name, description });
     }
@@ -1137,6 +1153,13 @@ function ActionManager({ initialKey, canEdit }: { initialKey: string; canEdit: b
           <JsonField label="审批策略" value={policyText} onChange={setPolicyText} rows={4} />
           <JsonField label="外部效果（数组）" value={effectsText} onChange={setEffectsText} rows={4} />
         </div>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={!canEdit}
+          checked={(() => { try { return JSON.parse(policyText).allowAutomation === true; } catch { return false; } })()}
+          onChange={(event) => { try {
+            setPolicyText(json({ ...JSON.parse(policyText), allowAutomation: event.target.checked }));
+            setError(null);
+          } catch { setError('请先修正审批策略 JSON'); } }} />允许自动化执行</label>
+        <p className="text-xs text-muted-foreground">仅当无需审批、无外部效果且只更新触发对象时可用于自动化。</p>
         <JsonField label="补偿定义" value={compensationText} onChange={setCompensationText} rows={3} />
         <div className="flex flex-wrap gap-2">
           {canEdit && <Button disabled={busy} onClick={() => run(selected ? '更新 Action' : '创建 Action', async () => {

@@ -2,12 +2,14 @@
  * 动作执行页：Action 运行记录、Outbox 消息、重试与补偿
  */
 import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Badge, statusVariant } from '@/components/ui/Badge';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
+import { Input, Label, Select, Textarea } from '@/components/ui/Input';
 import { Table, TBody, TD, TH, THeader, TR } from '@/components/ui/Table';
 import { formatTime } from '@/lib/utils';
 
@@ -33,8 +35,30 @@ interface OutboxMessage {
   lastError?: string;
 }
 
+interface ActionType {
+  actionKey: string;
+  name: string;
+  state: string;
+  paramsSchema?: { properties?: Record<string, { type?: string }>; required?: string[] };
+}
+
+interface ActionValidation {
+  valid: boolean;
+  errors: string[];
+  preconditionResults: Array<{ expression: string; passed: boolean; message?: string }>;
+  writePlan: Array<{ op: string; target: string; detail: string }>;
+}
+
 export function ActionsPage() {
+  const [searchParams] = useSearchParams();
   const { hasRole } = useAuth();
+  const [actionTypes, setActionTypes] = useState<ActionType[]>([]);
+  const [actionKey, setActionKey] = useState('');
+  const [paramsText, setParamsText] = useState(() => JSON.stringify({ objectId: searchParams.get('objectId') || '' }, null, 2));
+  const [caseId, setCaseId] = useState('');
+  const [alternativeId, setAlternativeId] = useState('');
+  const [approvalId, setApprovalId] = useState('');
+  const [preview, setPreview] = useState<ActionValidation | null>(null);
   const [runs, setRuns] = useState<ActionRun[]>([]);
   const [outbox, setOutbox] = useState<OutboxMessage[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +91,52 @@ export function ActionsPage() {
 
   useEffect(() => {
     load();
+    api.get<{ items?: ActionType[] } | ActionType[]>('/action-types')
+      .then((result) => setActionTypes((Array.isArray(result) ? result : result.items || []).filter((a) => a.state === 'published')))
+      .catch((e: ApiError) => setError(e.message || '加载 Action 类型失败'));
   }, []);
+
+  useEffect(() => {
+    const objectId = searchParams.get('objectId');
+    if (objectId) setParamsText((current) => {
+      try { return JSON.stringify({ ...JSON.parse(current), objectId }, null, 2); }
+      catch { return JSON.stringify({ objectId }, null, 2); }
+    });
+  }, [searchParams]);
+
+  function requestBody() {
+    if (!actionKey) throw new Error('请选择 Action');
+    let params: unknown;
+    try { params = JSON.parse(paramsText); }
+    catch { throw new Error('参数不是有效的 JSON'); }
+    if (!params || Array.isArray(params) || typeof params !== 'object') throw new Error('参数必须是 JSON 对象');
+    return { actionKey, params, caseId: caseId.trim() || undefined,
+      alternativeId: alternativeId.trim() || undefined, approvalId: approvalId.trim() || undefined };
+  }
+
+  async function validate() {
+    setBusy(true); setError(null); setInfo(null); setPreview(null);
+    try {
+      const result = await api.post<ActionValidation>('/actions/validate', requestBody());
+      setPreview(result);
+      if (result.valid) setInfo('验证通过，可以执行');
+    } catch (e) { setError((e as Error).message || '验证失败'); }
+    finally { setBusy(false); }
+  }
+
+  async function execute() {
+    setBusy(true); setError(null); setInfo(null);
+    try {
+      const body = requestBody();
+      const checked = await api.post<ActionValidation>('/actions/validate', body);
+      setPreview(checked);
+      if (!checked.valid) { setError(checked.errors.join('；') || '验证未通过'); return; }
+      await api.post('/actions/execute', { ...body, idempotencyKey: crypto.randomUUID() });
+      setInfo('Action 已执行');
+      await load();
+    } catch (e) { setError((e as Error).message || '执行失败'); }
+    finally { setBusy(false); }
+  }
 
   async function retryOutbox(id: string) {
     setBusy(true);
@@ -117,6 +186,41 @@ export function ActionsPage() {
 
       {error && <Alert variant="error">{error}</Alert>}
       {info && <Alert variant="success">{info}</Alert>}
+
+      <Card>
+        <CardHeader><CardTitle>执行 Action</CardTitle>
+          <CardDescription>选择已发布 Action，传入真实对象 ID 与参数，先查看验证和写入计划。</CardDescription></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-2"><Label htmlFor="execute-action">Action</Label>
+              <Select id="execute-action" value={actionKey} onChange={(e) => {
+                const next = e.target.value; setActionKey(next); setPreview(null);
+                const def = actionTypes.find((a) => a.actionKey === next);
+                const objectId = searchParams.get('objectId') || '';
+                setParamsText(JSON.stringify(Object.fromEntries(Object.entries(def?.paramsSchema?.properties || {})
+                  .map(([key, spec]) => [key, key === 'objectId' ? objectId : spec.type === 'number' ? 0
+                    : spec.type === 'boolean' ? false : spec.type === 'array' ? [] : spec.type === 'object' ? {} : ''])), null, 2));
+              }}><option value="">选择 Action</option>{actionTypes.map((a) =>
+                <option key={a.actionKey} value={a.actionKey}>{a.name} ({a.actionKey})</option>)}</Select></div>
+            <div className="space-y-2"><Label htmlFor="execute-case">案例 ID（可选）</Label>
+              <Input id="execute-case" value={caseId} onChange={(e) => setCaseId(e.target.value)} /></div>
+            <div className="space-y-2"><Label htmlFor="execute-alternative">方案 ID（可选）</Label>
+              <Input id="execute-alternative" value={alternativeId} onChange={(e) => setAlternativeId(e.target.value)} /></div>
+            <div className="space-y-2"><Label htmlFor="execute-approval">审批 ID（可选）</Label>
+              <Input id="execute-approval" value={approvalId} onChange={(e) => setApprovalId(e.target.value)} /></div>
+          </div>
+          <div className="space-y-2"><Label htmlFor="execute-params">参数（JSON）</Label>
+            <Textarea id="execute-params" rows={6} className="font-mono text-xs" value={paramsText}
+              onChange={(e) => { setParamsText(e.target.value); setPreview(null); }} /></div>
+          <div className="flex gap-2"><Button variant="outline" disabled={busy || !actionKey} onClick={validate}>验证</Button>
+            <Button disabled={busy || !actionKey} onClick={execute}>执行</Button></div>
+          {preview && <div className="space-y-2 rounded-md border p-3 text-sm">
+            <Badge variant={preview.valid ? 'success' : 'destructive'}>{preview.valid ? '验证通过' : '验证失败'}</Badge>
+            {preview.errors.length > 0 && <ul className="list-inside list-disc text-destructive">{preview.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
+            {preview.writePlan.length > 0 && <pre className="overflow-auto bg-muted p-2 text-xs">{JSON.stringify(preview.writePlan, null, 2)}</pre>}
+          </div>}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

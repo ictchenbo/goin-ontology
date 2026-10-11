@@ -7,6 +7,7 @@ import { recordSource, attachEvidence } from '../sources/source-service';
 import { createObject, updateObject, createLink, queryObjects } from '../objects/object-service';
 import { validatePayload } from '../ontology/ontology-service';
 import { writeAudit } from '../audit/audit-service';
+import { processObjectChange } from '../automation/automation-service';
 import { sha256 } from '../../shared/hash';
 
 export interface MappingConfig {
@@ -155,13 +156,11 @@ export function applyIngestJob(jobId: string, actor: string): IngestResult {
       const payload: Record<string, unknown> = {};
       for (const [src, dest] of Object.entries(mapping.fieldMap)) {
         if (raw[src] !== undefined && raw[src] !== '') {
-          let v: unknown = raw[src];
-          // 简单类型推断：数字
-          if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v)) v = Number(v);
-          payload[dest] = v;
+          // 由目标类型定义负责转换，避免把纯数字的业务编号误转成数值。
+          payload[dest] = raw[src];
         }
       }
-      validatePayload(mapping.typeKey, payload);
+      const normalized = validatePayload(mapping.typeKey, payload);
 
       const sourceKey = mapping.sourceKey ?? job.sourceType;
       const keys = (mapping.matchKeys ?? []).map((k) => String(raw[k] ?? '').trim());
@@ -191,7 +190,7 @@ export function applyIngestJob(jobId: string, actor: string): IngestResult {
       const filters = (mapping.matchKeys ?? []).map((k) => ({
         field: mapping.fieldMap[k] ?? k,
         op: 'eq',
-        value: raw[k],
+        value: normalized[mapping.fieldMap[k] ?? k],
       })).filter((f) => f.value !== undefined);
       if (filters.length) {
         const found = queryObjects({ typeKey: mapping.typeKey, filters, limit: 1 });
@@ -206,15 +205,16 @@ export function applyIngestJob(jobId: string, actor: string): IngestResult {
       let revision = 1;
       if (objectId) {
         const updated = updateObject({
-          objectId, payload, actor, reason: `导入更新 ${job.filename}`, skipAudit: true,
+          objectId, payload: normalized, actor, reason: `导入更新 ${job.filename}`, skipAutomation: true,
         });
         revision = updated.revision;
       } else {
         const obj = createObject({
           typeKey: mapping.typeKey,
-          payload,
+          payload: normalized,
           actor,
           reason: `导入创建 ${job.filename}`,
+          skipAutomation: true,
         });
         objectId = obj.objectId;
         created = true;
@@ -262,6 +262,8 @@ export function applyIngestJob(jobId: string, actor: string): IngestResult {
           }
         } catch { /* 链接失败不阻断导入 */ }
       }
+
+      processObjectChange(objectId!);
 
       db.prepare('UPDATE ingest_row SET status = ?, mapped_object_id = ? WHERE id = ?')
         .run('applied', objectId, row.id);

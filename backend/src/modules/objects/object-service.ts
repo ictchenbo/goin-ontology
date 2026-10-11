@@ -2,6 +2,7 @@
 import { getDb, nowIso } from '../../db/database';
 import { newId } from '../../shared/ids';
 import { AppError } from '../../shared/errors';
+import { stableHash } from '../../shared/hash';
 import { writeAudit } from '../audit/audit-service';
 import { validatePayload, getType } from '../ontology/ontology-service';
 import { clearanceAllows, redactFields, requireObjectAccess, AuthUser } from '../auth/auth-service';
@@ -19,12 +20,14 @@ export interface ObjectInput {
 
 export function createObject(input: ObjectInput) {
   const db = getDb();
+  const type = getType(input.typeKey);
+  if (type.state !== 'published') throw new AppError('PRECONDITION_FAILED', `对象类型尚未发布: ${input.typeKey}`);
   const payload = validatePayload(input.typeKey, input.payload);
   const title = input.title || buildTitle(input.typeKey, payload);
   const id = newId('obj');
   const now = nowIso();
   const labels = input.securityLabels ?? ['PUBLIC'];
-  const schemaVersion = getType(input.typeKey).versions.find((v) => v.state === 'published')?.schemaVersion ?? 1;
+  const schemaVersion = type.versions.find((v) => v.state === 'published')?.schemaVersion ?? 1;
   const tx = db.transaction(() => {
     db.prepare(`INSERT INTO object_instance
       (object_id, type_key, title, payload_json, revision, security_labels, created_at, updated_at, deleted, schema_version)
@@ -52,22 +55,26 @@ export function createObject(input: ObjectInput) {
 
 export function buildTitle(typeKey: string, payload: Record<string, unknown>): string {
   try {
-    const def = getType(typeKey).definition as any;
+    const def = getType(typeKey).publishedDefinition as any;
     if (def.titleTemplate) {
       return String(def.titleTemplate).replace(/\{(\w+)\}/g, (_m, k) => String(payload[k] ?? k));
     }
     if (def.displayProperty && payload[def.displayProperty] !== undefined) {
       return String(payload[def.displayProperty]);
     }
-    const nameish = ['name', 'title', 'code', 'code', 'event_id', 'report_id', 'case_number', 'order_no'];
+    const nameish = ['name', 'title', 'code', 'id', 'event_id', 'report_id', 'case_number', 'order_no'];
     for (const k of nameish) if (payload[k] !== undefined) return String(payload[k]);
+    const businessId = Object.keys(payload).find((key) => /(?:Id|Code|_id|_code)$/.test(key) &&
+      payload[key] !== undefined && payload[key] !== null && payload[key] !== '');
+    if (businessId) return String(payload[businessId]);
   } catch { /* 类型未注册时忽略 */ }
-  return `${typeKey}-${Math.random().toString(36).slice(2, 8)}`;
+  return `${typeKey}-${stableHash(payload).slice(0, 8)}`;
 }
 
 export interface WriteObjectInput {
   objectId: string;
   payload: Record<string, unknown>;
+  title?: string;
   expectedRevision?: number;
   actor: string;
   reason?: string;
@@ -90,15 +97,16 @@ export function updateObject(input: WriteObjectInput) {
   const before = JSON.parse(row.payload_json);
   const merged = { ...before, ...input.payload };
   const payload = validatePayload(row.type_key, merged);
-  const changed = Object.keys(payload).filter(
+  const changed = [...new Set([...Object.keys(before), ...Object.keys(payload)])].filter(
     (k) => JSON.stringify(payload[k]) !== JSON.stringify(before[k])
   );
-  if (!changed.length && Object.keys(input.payload).every((k) => before[k] !== undefined)) {
-    return getObject(input.objectId);
-  }
+  const title = input.title !== undefined ? (input.title.trim() || buildTitle(row.type_key, payload)) :
+    input.payload.title !== undefined ? String(input.payload.title) :
+    row.title === buildTitle(row.type_key, before) ? buildTitle(row.type_key, payload) : row.title;
+  if (title !== row.title) changed.push('__title');
+  if (!changed.length) return getObject(input.objectId);
   const newRev = row.revision + 1;
   const now = nowIso();
-  const title = input.payload.title !== undefined ? String(input.payload.title) : buildTitle(row.type_key, payload);
   const tx = db.transaction(() => {
     db.prepare(`UPDATE object_instance SET payload_json = ?, revision = ?, title = ?, updated_at = ?
       WHERE object_id = ?`).run(JSON.stringify(payload), newRev, title, now, input.objectId);

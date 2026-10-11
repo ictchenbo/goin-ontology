@@ -20,6 +20,12 @@ export interface RuleDef {
 
 export function upsertRule(input: RuleDef, actor: string) {
   const db = getDb();
+  const references = db.prepare("SELECT condition_json FROM automation_rule WHERE json_extract(condition_json, '$.ruleKey') = ?")
+    .all(input.ruleKey) as Array<{ condition_json: string }>;
+  if (references.some((reference) => {
+    const condition = JSON.parse(reference.condition_json);
+    return input.kind !== 'trigger' || (input.scopeType && input.scopeType !== condition.typeKey);
+  })) throw new AppError('CONFLICT', `规则 ${input.ruleKey} 已被自动化引用，不能改为不兼容的类型或范围`);
   // 校验表达式可解析并枚举依赖
   let deps = input.inputDeps ?? [];
   try {
@@ -104,6 +110,9 @@ function mapRule(r: any) {
 }
 
 export function deleteRule(ruleKey: string, actor: string) {
+  const refs = getDb().prepare("SELECT COUNT(*) AS count FROM automation_rule WHERE json_extract(condition_json, '$.ruleKey') = ?")
+    .get(ruleKey) as { count: number };
+  if (refs.count) throw new AppError('CONFLICT', `规则 ${ruleKey} 已被自动化引用，不能删除`);
   getDb().prepare('DELETE FROM rule_def WHERE rule_key = ?').run(ruleKey);
   writeAudit({ actor, eventType: 'rule.deleted', resourceType: 'rule_def', resourceId: ruleKey });
 }

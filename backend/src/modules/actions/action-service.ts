@@ -18,6 +18,7 @@ export interface ActionTypeInput {
   preconditions?: string[];
   writeSet?: Array<Record<string, unknown>>;
   approvalPolicy?: {
+    allowAutomation?: boolean;
     requiredRoles?: string[];
     thresholdScore?: number;
     legalAuthorityParam?: string;
@@ -133,6 +134,8 @@ export interface ExecuteActionInput {
   actor: AuthUser;
   /** 是否已获得审批 */
   approvalId?: string;
+  /** 自动化触发的 Action 不再次触发自动化，避免自激循环。 */
+  skipAutomation?: boolean;
 }
 
 export interface ValidationPreview {
@@ -422,10 +425,12 @@ export function executeAction(input: ExecuteActionInput) {
         resourceId: runId, after: { actionKey: input.actionKey, params: input.params, caseId },
       });
     });
-    const { processObjectChange } = require('../automation/automation-service') as typeof import('../automation/automation-service');
-    for (const objectId of affectedObjectIds) {
-      try { processObjectChange(objectId); }
-      catch (automationError) { console.error('[automation]', automationError); }
+    if (!input.skipAutomation) {
+      const { processObjectChange } = require('../automation/automation-service') as typeof import('../automation/automation-service');
+      for (const objectId of affectedObjectIds) {
+        try { processObjectChange(objectId); }
+        catch (automationError) { console.error('[automation]', automationError); }
+      }
     }
   } catch (e: any) {
     db.prepare(`INSERT OR IGNORE INTO action_run

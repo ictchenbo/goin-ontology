@@ -44,6 +44,7 @@ export default function App() {
         <Route path="ontology/:module" element={<ModelStudioPage />} />
         <Route path="ontology/:module/:itemKey" element={<ModelModuleDetailPage />} />
         <Route path="objects" element={<ObjectsPage />} />
+        <Route path="objects/:objectId" element={<ObjectsPage />} />
         <Route path="cases" element={<CasesPage />} />
         <Route path="cases/:caseId" element={<CaseDetailPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
