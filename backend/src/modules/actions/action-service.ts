@@ -53,20 +53,20 @@ export function upsertActionType(input: ActionTypeInput, actor: string) {
   };
   if (existing) {
     db.prepare(`UPDATE action_type SET name=?, description=?, params_schema=?, preconditions=?, write_set=?,
-      approval_policy=?, required_roles=?, external_effects=?, compensation=?, version=?, state='published'
+      approval_policy=?, required_roles=?, external_effects=?, compensation=?, version=?, state='published', updated_at=?
       WHERE action_key=?`).run(
       values.name, values.description, values.paramsSchema, values.preconditions, values.writeSet,
       values.approvalPolicy, values.requiredRoles, values.externalEffects, values.compensation,
-      version, input.actionKey
+      version, now, input.actionKey
     );
   } else {
     db.prepare(`INSERT INTO action_type
       (action_key, name, description, params_schema, preconditions, write_set, approval_policy,
-       required_roles, external_effects, compensation, version, state, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?, 'published', ?)`).run(
+       required_roles, external_effects, compensation, version, state, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?, 'published', ?, ?)`).run(
       input.actionKey, values.name, values.description, values.paramsSchema, values.preconditions,
       values.writeSet, values.approvalPolicy, values.requiredRoles, values.externalEffects,
-      values.compensation, version, now
+      values.compensation, version, now, now
     );
   }
   writeAudit({
@@ -92,6 +92,8 @@ export function getActionType(actionKey: string) {
     compensation: JSON.parse(row.compensation || '{}'),
     version: row.version,
     state: row.state,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 

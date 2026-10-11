@@ -43,6 +43,12 @@ function json(value: unknown): string {
   return JSON.stringify(value ?? {}, null, 2);
 }
 
+function recentFirst<T extends { createdAt?: unknown; updatedAt?: unknown }>(items: T[]): T[] {
+  return [...items].sort((a, b) =>
+    String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')) ||
+    String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+}
+
 function Notice({ error, info }: { error: string | null; info: string | null }) {
   return <>
     {error && <Alert variant="error">{error}</Alert>}
@@ -203,10 +209,12 @@ type Property = {
   sharedKey?: string; sharedVersion?: number;
   computed?: { functionKey: string; inputs: Record<string, string> };
 };
-type SharedProperty = { propertyKey: string; definition: Property; version: number; usedBy: string[] };
+type SharedProperty = { propertyKey: string; definition: Property; version: number; usedBy: string[];
+  createdAt?: string; updatedAt?: string };
 type ObjectType = {
   typeKey: string; displayName: string; description: string; category: string;
   interfaces: string[]; state: string; currentVersion: number; propertyCount?: number;
+  createdAt?: string; updatedAt?: string;
   definition: { properties: Property[]; displayProperty?: string; titleTemplate?: string; searchFields?: string[] };
   publishedDefinition: { properties: Property[] };
   versions: Array<{ schemaVersion: number; state: string; changeNote: string }>;
@@ -428,7 +436,7 @@ function ObjectTypeList({ canEdit, canDelete }: { canEdit: boolean; canDelete: b
   const [info, setInfo] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState('');
   const load = useCallback(async () => {
-    setItems((await api.get<{ items: ObjectType[] }>('/ontology/types')).items);
+    setItems(recentFirst((await api.get<{ items: ObjectType[] }>('/ontology/types')).items));
   }, []);
   useEffect(() => { void load().catch((failure) => setError(message(failure))); }, [load]);
   const filtered = items.filter((item) => `${item.displayName} ${item.typeKey} ${item.category}`
@@ -443,8 +451,11 @@ function ObjectTypeList({ canEdit, canDelete }: { canEdit: boolean; canDelete: b
       });
       setInfo('对象类型基本信息已更新');
     } else {
-      await api.post('/ontology/types', { ...value, interfaces: [], definition: { properties: [] } });
-      setInfo('对象类型草稿已创建，可进入详情添加属性');
+      const created = await api.post<ObjectType>('/ontology/types', {
+        ...value, interfaces: [], definition: { properties: [] },
+      });
+      navigate(`/ontology/types/${encodeURIComponent(created.typeKey)}`);
+      return;
     }
     await load();
   }
@@ -579,7 +590,7 @@ function ModelModuleList({ tab, canEdit, canDelete }: {
   const [info, setInfo] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState('');
   const load = useCallback(async () => {
-    setItems((await api.get<{ items: ModuleRecord[] }>(config.endpoint)).items);
+    setItems(recentFirst((await api.get<{ items: ModuleRecord[] }>(config.endpoint)).items));
   }, [config.endpoint]);
   useEffect(() => { void load().catch((failure) => setError(message(failure))); }, [load]);
   const filtered = items.filter((item) => `${moduleName(tab, item)} ${item[config.key]} ${moduleSummary(tab, item)}`
@@ -663,6 +674,7 @@ function ModelModuleList({ tab, canEdit, canDelete }: {
 }
 
 function SharedPropertyList({ canEdit }: { canEdit: boolean }) {
+  const navigate = useNavigate();
   const [items, setItems] = useState<SharedProperty[]>([]);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -671,7 +683,7 @@ function SharedPropertyList({ canEdit }: { canEdit: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const load = useCallback(async () => {
-    setItems((await api.get<{ items: SharedProperty[] }>('/ontology/shared-properties')).items);
+    setItems(recentFirst((await api.get<{ items: SharedProperty[] }>('/ontology/shared-properties')).items));
   }, []);
   useEffect(() => { void load().catch((failure) => setError(message(failure))); }, [load]);
   const filtered = items.filter((item) => `${item.definition.label} ${item.propertyKey} ${item.definition.type}`
@@ -686,8 +698,11 @@ function SharedPropertyList({ canEdit }: { canEdit: boolean }) {
       });
       setInfo('共享定义已更新；引用类型需分别同步并发布');
     } else {
-      await api.post('/ontology/shared-properties', { propertyKey: property.name, definition: property });
-      setInfo('共享属性已创建');
+      const created = await api.post<SharedProperty>('/ontology/shared-properties', {
+        propertyKey: property.name, definition: property,
+      });
+      navigate(`/ontology/shared/${encodeURIComponent(created.propertyKey)}`);
+      return;
     }
     await load();
   }

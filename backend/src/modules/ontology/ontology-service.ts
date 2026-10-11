@@ -158,7 +158,7 @@ export function listSharedProperties() {
         [...new Set([...(usages.get(property.sharedKey) ?? []), type.type_key])]);
     }
   }
-  return (db.prepare('SELECT * FROM shared_property ORDER BY property_key').all() as any[])
+  return (db.prepare('SELECT * FROM shared_property ORDER BY updated_at DESC, created_at DESC, property_key').all() as any[])
     .map((row) => ({ propertyKey: row.property_key,
       definition: JSON.parse(row.definition_json) as PropertyDef,
       version: row.current_version, usedBy: usages.get(row.property_key) ?? [],
@@ -265,8 +265,8 @@ export function getType(typeKey: string) {
 export function listTypes(category?: string) {
   const db = getDb();
   const rows = category
-    ? db.prepare('SELECT * FROM ontology_type WHERE category = ? ORDER BY type_key').all(category)
-    : db.prepare('SELECT * FROM ontology_type ORDER BY type_key').all() as any[];
+    ? db.prepare('SELECT * FROM ontology_type WHERE category = ? ORDER BY updated_at DESC, created_at DESC, type_key').all(category)
+    : db.prepare('SELECT * FROM ontology_type ORDER BY updated_at DESC, created_at DESC, type_key').all() as any[];
   return (rows as any[]).map((row) => {
     const v = db.prepare(
       'SELECT definition_json FROM type_version WHERE type_key = ? ORDER BY schema_version DESC LIMIT 1'
@@ -280,6 +280,8 @@ export function listTypes(category?: string) {
       icon: row.icon,
       state: row.state,
       currentVersion: row.current_version,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
       propertyCount: JSON.parse(v?.definition_json || '{"properties":[]}').properties?.length ?? 0,
     };
   });
@@ -648,6 +650,7 @@ export function updateLinkDef(linkKey: string, patch: {
     fields.push('state = ?'); values.push(patch.state);
   }
   if (!fields.length) return before;
+  fields.push('updated_at = ?'); values.push(nowIso());
   values.push(linkKey);
   db.prepare(`UPDATE link_def SET ${fields.join(', ')} WHERE link_key = ?`).run(...values);
   writeAudit({
@@ -664,7 +667,8 @@ export function deleteLinkDef(linkKey: string, actor: string, opts: { force?: bo
     'SELECT COUNT(*) AS c FROM link_instance WHERE link_key = ?'
   ).get(linkKey) as any).c as number;
   if (instCount > 0 && !opts.force) {
-    db.prepare("UPDATE link_def SET state = 'archived' WHERE link_key = ?").run(linkKey);
+    db.prepare("UPDATE link_def SET state = 'archived', updated_at = ? WHERE link_key = ?")
+      .run(nowIso(), linkKey);
     db.prepare("UPDATE link_instance SET is_valid = 0, valid_to = ? WHERE link_key = ? AND is_valid = 1")
       .run(nowIso(), linkKey);
     writeAudit({ actor, eventType: 'ontology.link_archived', resourceType: 'link_def',
@@ -712,6 +716,7 @@ export function updateInterface(interfaceKey: string, patch: {
     fields.push('capabilities = ?'); values.push(JSON.stringify(patch.capabilities));
   }
   if (!fields.length) return before;
+  fields.push('updated_at = ?'); values.push(nowIso());
   values.push(interfaceKey);
   db.prepare(`UPDATE interface_def SET ${fields.join(', ')} WHERE interface_key = ?`).run(...values);
   writeAudit({
@@ -777,11 +782,11 @@ export function createLinkDef(input: {
   }
   try {
     db.prepare(`INSERT INTO link_def
-      (link_key, display_name, from_type, to_type, cardinality, inverse_name, description, required, state, created_at)
-      VALUES (?,?,?,?,?,?,?,?, 'published', ?)`).run(
+      (link_key, display_name, from_type, to_type, cardinality, inverse_name, description, required, state, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?, 'published', ?, ?)`).run(
       input.linkKey, input.displayName, input.fromType, input.toType,
       input.cardinality ?? '1:N', input.inverseName ?? '', input.description ?? '',
-      input.required ? 1 : 0, now
+      input.required ? 1 : 0, now, now
     );
   } catch (e: any) {
     if (String(e.message).includes('UNIQUE')) throw new AppError('CONFLICT', `关系已存在: ${input.linkKey}`);
@@ -823,6 +828,7 @@ function mapLinkDef(r: any) {
     required: !!r.required,
     state: r.state,
     createdAt: r.created_at,
+    updatedAt: r.updated_at,
   };
 }
 
@@ -838,10 +844,11 @@ export function createInterface(input: {
   const db = getDb();
   validateInterfaceProperties(input.properties ?? []);
   try {
-    db.prepare(`INSERT INTO interface_def (interface_key, display_name, description, properties, capabilities, created_at)
-      VALUES (?,?,?,?,?,?)`).run(
+    const now = nowIso();
+    db.prepare(`INSERT INTO interface_def (interface_key, display_name, description, properties, capabilities, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?)`).run(
       input.interfaceKey, input.displayName, input.description ?? '',
-      JSON.stringify(input.properties ?? []), JSON.stringify(input.capabilities ?? []), nowIso()
+      JSON.stringify(input.properties ?? []), JSON.stringify(input.capabilities ?? []), now, now
     );
   } catch (e: any) {
     if (String(e.message).includes('UNIQUE')) throw new AppError('CONFLICT', `Interface 已存在: ${input.interfaceKey}`);
@@ -866,6 +873,7 @@ export function getInterface(key: string) {
     properties: JSON.parse(row.properties || '[]'),
     capabilities: JSON.parse(row.capabilities || '[]'),
     createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
