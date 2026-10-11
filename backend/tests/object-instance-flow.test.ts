@@ -38,6 +38,10 @@ test('新对象类型可经导入创建实例并由触发规则执行受控 Acti
       approvalPolicy: { allowAutomation: true }, requiredRoles: ['operator'] }, 'tester');
     const actor = { id: 'admin', username: 'admin', displayName: '管理员', roles: ['admin'],
       securityClearance: 'TOP_SECRET' };
+    assert.throws(() => automations.upsertAutomation({ name: '缺少运行上下文', typeKey: 'Telemetry',
+      expression: 'temperatureC > 8',
+      effect: { type: 'execute_action', actionKey: 'mark_review', params: {} } }, actor),
+    /自动化条件只能读取/);
     automations.upsertAutomation({ name: '自动标记超温', typeKey: 'Telemetry', ruleKey: 'high_temperature',
       effect: { type: 'execute_action', actionKey: 'mark_review', params: {} } }, actor);
     assert.throws(() => rules.deleteRule('high_temperature', 'tester'), /已被自动化引用/);

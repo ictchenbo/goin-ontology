@@ -128,30 +128,51 @@ export function ModelStudioPage() {
 type Automation = {
   id: string; name: string; enabled: boolean;
   condition: { typeKey: string; expression: string; ruleKey?: string };
-  effect: Record<string, unknown>;
+  effect: { type: 'create_case' | 'create_review_request' | 'execute_action';
+    decisionTypeKey?: string; taskTypeKey?: string; title?: string;
+    actionKey?: string; params?: Record<string, unknown> };
 };
+type AutomationConditionMode = 'rule' | 'expression';
+type AutomationEffectType = Automation['effect']['type'];
 
 function AutomationManager({ initialKey, canEdit }: { initialKey: string; canEdit: boolean }) {
   const navigate = useNavigate();
   const [runs, setRuns] = useState<Array<{ id: string; ruleId: string; status: string; objectId: string }>>([]);
+  const [types, setTypes] = useState<ObjectType[]>([]);
+  const [decisionTypes, setDecisionTypes] = useState<Array<{ typeKey: string; displayName: string;
+    targetObjectType?: string; state: string }>>([]);
+  const [actions, setActions] = useState<ActionDef[]>([]);
   const [id, setId] = useState('');
   const [name, setName] = useState('');
-  const [typeKey, setTypeKey] = useState('ObservedEvent');
-  const [expression, setExpression] = useState('object.verificationStatus == "unverified"');
+  const [typeKey, setTypeKey] = useState('');
+  const [conditionMode, setConditionMode] = useState<AutomationConditionMode>('expression');
+  const [expression, setExpression] = useState('');
   const [ruleKey, setRuleKey] = useState('');
   const [triggerRules, setTriggerRules] = useState<Array<{ ruleKey: string; name: string; scopeType: string;
-    expression: string }>>([]);
-  const [effect, setEffect] = useState('{"type":"create_review_request","taskTypeKey":"ReviewRequest","title":"待人工核查"}');
+    expression: string; inputDeps: string[]; state: string }>>([]);
+  const [effectType, setEffectType] = useState<AutomationEffectType>('create_review_request');
+  const [decisionTypeKey, setDecisionTypeKey] = useState('');
+  const [taskTypeKey, setTaskTypeKey] = useState('');
+  const [effectTitle, setEffectTitle] = useState('');
+  const [actionKey, setActionKey] = useState('');
+  const [actionParams, setActionParams] = useState('{}');
   const [enabled, setEnabled] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const refresh = useCallback(async () => {
-    const [ruleResponse, runResponse, triggerResponse] = await Promise.all([
+    const [ruleResponse, runResponse, triggerResponse, typeResponse, decisionResponse, actionResponse] = await Promise.all([
       api.get<{ items: Automation[] }>('/automations'),
       api.get<{ items: Array<{ id: string; ruleId: string; status: string; objectId: string }> }>('/automations/runs'),
-      api.get<{ items: Array<{ ruleKey: string; name: string; scopeType: string; expression: string }> }>('/rules?kind=trigger'),
+      api.get<{ items: Array<{ ruleKey: string; name: string; scopeType: string; expression: string;
+        inputDeps: string[]; state: string }> }>('/rules?kind=trigger'),
+      api.get<{ items: ObjectType[] }>('/ontology/types'),
+      api.get<{ items: Array<{ typeKey: string; displayName: string; targetObjectType?: string; state: string }> }>('/decision-types'),
+      api.get<{ items: ActionDef[] }>('/action-types'),
     ]);
     setTriggerRules(triggerResponse.items);
+    setTypes(recentFirst(typeResponse.items));
+    setDecisionTypes(decisionResponse.items);
+    setActions(actionResponse.items);
     if (initialKey !== 'new') {
       const selected = ruleResponse.items.find((rule) => rule.id === initialKey);
       if (!selected) throw new Error(`自动化规则不存在: ${initialKey}`);
@@ -163,14 +184,51 @@ function AutomationManager({ initialKey, canEdit }: { initialKey: string; canEdi
   function edit(rule: Automation) {
     setId(rule.id); setName(rule.name); setTypeKey(rule.condition.typeKey);
     setExpression(rule.condition.expression); setRuleKey(rule.condition.ruleKey ?? '');
-    setEffect(json(rule.effect)); setEnabled(rule.enabled);
+    setConditionMode(rule.condition.ruleKey ? 'rule' : 'expression');
+    setEffectType(rule.effect.type); setDecisionTypeKey(rule.effect.decisionTypeKey ?? '');
+    setTaskTypeKey(rule.effect.taskTypeKey ?? ''); setEffectTitle(rule.effect.title ?? '');
+    setActionKey(rule.effect.actionKey ?? ''); setActionParams(json(rule.effect.params ?? {}));
+    setEnabled(rule.enabled);
   }
+  const availableTriggerRules = triggerRules.filter((rule) =>
+    rule.state === 'published' && (!rule.scopeType || rule.scopeType === typeKey) &&
+    rule.inputDeps.every((dependency) => dependency === 'object' ||
+      dependency.startsWith('object.') || dependency === 'now'));
+  const selectedTriggerRule = triggerRules.find((rule) => rule.ruleKey === ruleKey);
+  const availableDecisionTypes = decisionTypes.filter((decisionType) =>
+    !decisionType.targetObjectType || decisionType.targetObjectType === typeKey);
+  const availableActions = actions.filter((action) => {
+    const policy = action.approvalPolicy ?? {};
+    return action.state === 'published' && policy.allowAutomation === true &&
+      Object.keys(policy).every((key) => key === 'allowAutomation') &&
+      !action.externalEffects.length && action.writeSet.length > 0 &&
+      action.writeSet.every((write) => write.op === 'update' &&
+        (write.objectId === undefined || write.objectId === '${params.objectId}'));
+  });
   async function save() {
     setError(null); setInfo(null);
     try {
+      if (!name.trim() || !typeKey) throw new Error('请填写规则名称并选择对象类型');
+      if (conditionMode === 'rule' && !ruleKey) throw new Error('请选择触发规则');
+      if (conditionMode === 'expression' && !expression.trim()) throw new Error('请填写条件表达式');
+      let effect: Automation['effect'];
+      if (effectType === 'create_case') {
+        if (!decisionTypeKey || !effectTitle.trim()) throw new Error('请选择决策类型并填写案例标题');
+        effect = { type: effectType, decisionTypeKey, title: effectTitle.trim() };
+      } else if (effectType === 'create_review_request') {
+        if (!taskTypeKey || !effectTitle.trim()) throw new Error('请选择核查请求对象类型并填写标题');
+        effect = { type: effectType, taskTypeKey, title: effectTitle.trim() };
+      } else {
+        if (!actionKey) throw new Error('请选择 Action');
+        const params = parseJson<unknown>(actionParams, 'Action 参数');
+        if (!params || typeof params !== 'object' || Array.isArray(params)) {
+          throw new Error('Action 参数必须是 JSON 对象');
+        }
+        effect = { type: effectType, actionKey, params: params as Record<string, unknown> };
+      }
       const saved = await api.post<Automation>('/automations', { ...(id ? { id } : {}), name, typeKey,
-        expression: ruleKey ? undefined : expression, ruleKey: ruleKey || undefined,
-        effect: parseJson(effect, '效果配置'), enabled });
+        expression: conditionMode === 'expression' ? expression : undefined,
+        ruleKey: conditionMode === 'rule' ? ruleKey : undefined, effect, enabled });
       await refresh();
       setInfo('自动化规则已保存');
       if (initialKey === 'new') navigate(`/ontology/automations/${encodeURIComponent(saved.id)}`);
@@ -178,20 +236,83 @@ function AutomationManager({ initialKey, canEdit }: { initialKey: string; canEdi
   }
   return <div className="space-y-4">
     <Notice error={error} info={info} />
-    <Card><CardHeader><CardTitle>{initialKey === 'new' ? '新建自动化规则' : `编辑 ${initialKey}`}</CardTitle></CardHeader><CardContent className="space-y-3">
-      <p className="text-sm text-muted-foreground">可引用已发布的触发规则；效果可创建案例、人工核查请求，或执行显式允许自动化的低影响 Action。</p>
+    <Card><CardHeader><CardTitle>{initialKey === 'new' ? '新建自动化规则' : `编辑 ${initialKey}`}</CardTitle></CardHeader><CardContent className="space-y-4">
+      <p className="text-sm text-muted-foreground">指定对象创建或更新后，系统检查条件；条件成立时执行下方选择的一种效果。</p>
       <div className="grid gap-3 md:grid-cols-2"><Field label="规则名称" value={name} onChange={setName} disabled={!canEdit} required />
-        <Field label="对象类型" value={typeKey} onChange={setTypeKey} disabled={!canEdit} required /></div>
-      <div className="space-y-1"><Label htmlFor="automation-rule">触发规则</Label>
-        <Select id="automation-rule" value={ruleKey} disabled={!canEdit} onChange={(event) => setRuleKey(event.target.value)}>
-          <option value="">自定义表达式</option>
-          {triggerRules.filter((rule) => !rule.scopeType || rule.scopeType === typeKey).map((rule) =>
-            <option key={rule.ruleKey} value={rule.ruleKey}>{rule.name} ({rule.ruleKey})</option>)}
-        </Select></div>
-      <Field label="条件表达式" value={ruleKey ? triggerRules.find((rule) => rule.ruleKey === ruleKey)?.expression ?? '' : expression}
-        onChange={setExpression} disabled={!canEdit || !!ruleKey} required={!ruleKey} />
-      <JsonField label="效果配置 JSON" value={effect} onChange={setEffect} rows={4} />
-      <p className="text-xs text-muted-foreground">Action 效果示例：{`{"type":"execute_action","actionKey":"mark_review","params":{"reason":"${'${object.reason}'}"}}`}；系统自动传入触发对象 ID。</p>
+        <ObjectTypePicker label="对象类型" types={types} value={typeKey} disabled={!canEdit}
+          onChange={(nextType) => {
+            setTypeKey(nextType);
+            if (selectedTriggerRule?.scopeType && selectedTriggerRule.scopeType !== nextType) setRuleKey('');
+            setDecisionTypeKey('');
+          }} /></div>
+      <section className="space-y-3 rounded-md border border-border p-4" aria-labelledby="automation-condition-title">
+        <div><h3 id="automation-condition-title" className="font-semibold">1. 何时触发</h3>
+          <p className="text-sm text-muted-foreground">对象发生变更时评估条件，结果为 true 才继续执行。选择已有规则或在这里直接编写条件，二者选其一。</p>
+          <p className="text-xs text-muted-foreground">运行时提供 object（当前对象的属性）和 now（检查时间）；引用的触发规则也只能读取这些值。</p></div>
+        <div className="space-y-1"><Label htmlFor="automation-condition-mode">条件来源</Label>
+          <Select id="automation-condition-mode" value={conditionMode} disabled={!canEdit}
+            onChange={(event) => { setConditionMode(event.target.value as AutomationConditionMode); setRuleKey(''); }}>
+            <option value="expression">直接编写条件表达式</option>
+            <option value="rule">引用已发布的触发规则</option>
+          </Select></div>
+        {conditionMode === 'rule' ? <>
+          <div className="space-y-1"><Label htmlFor="automation-rule">触发规则</Label>
+            <Select id="automation-rule" value={ruleKey} disabled={!canEdit || !typeKey} onChange={(event) => setRuleKey(event.target.value)}>
+              <option value="">选择与对象类型兼容的规则</option>
+              {ruleKey && !availableTriggerRules.some((rule) => rule.ruleKey === ruleKey) &&
+                <option value={ruleKey}>原有规则不可用于自动化，请重新选择（{ruleKey}）</option>}
+              {availableTriggerRules.map((rule) =>
+                <option key={rule.ruleKey} value={rule.ruleKey}>{rule.name} ({rule.ruleKey})</option>)}
+            </Select></div>
+          {selectedTriggerRule && <p className="rounded-md bg-muted p-3 text-sm">规则条件：<code className="break-all">{selectedTriggerRule.expression}</code></p>}
+          {!availableTriggerRules.length && <p className="text-sm text-muted-foreground">暂无兼容的触发规则；可先在“规则”模块创建，或改用直接编写。</p>}
+        </> : <>
+          <div className="space-y-1"><Label htmlFor="automation-expression">条件表达式</Label>
+            <Textarea id="automation-expression" rows={3} className="font-mono text-sm" value={expression}
+              disabled={!canEdit} onChange={(event) => setExpression(event.target.value)}
+              placeholder={'object.status == "open"'} /></div>
+          <p className="text-xs text-muted-foreground">用 object.属性名读取当前对象的属性；now 表示本次检查时间。示例仅在对象有 status 属性时适用。</p>
+        </>}
+      </section>
+      <section className="space-y-3 rounded-md border border-border p-4" aria-labelledby="automation-effect-title">
+        <div><h3 id="automation-effect-title" className="font-semibold">2. 条件成立后做什么</h3>
+          <p className="text-sm text-muted-foreground">每条自动化只执行一种效果；创建的案例或核查请求会关联触发对象。</p></div>
+        <div className="space-y-1"><Label htmlFor="automation-effect-type">效果类型</Label>
+          <Select id="automation-effect-type" value={effectType} disabled={!canEdit}
+            onChange={(event) => setEffectType(event.target.value as AutomationEffectType)}>
+            <option value="create_review_request">创建人工核查请求</option>
+            <option value="create_case">创建决策案例</option>
+            <option value="execute_action">执行允许自动化的 Action</option>
+          </Select></div>
+        {effectType === 'create_case' && <>
+          <div className="space-y-1"><Label htmlFor="automation-decision-type">决策类型</Label>
+            <Select id="automation-decision-type" value={decisionTypeKey} disabled={!canEdit || !typeKey}
+              onChange={(event) => setDecisionTypeKey(event.target.value)}>
+              <option value="">选择决策类型</option>
+              {availableDecisionTypes.map((item) => <option key={item.typeKey} value={item.typeKey}>{item.displayName} ({item.typeKey})</option>)}
+            </Select></div>
+          {!availableDecisionTypes.length && <p className="text-sm text-muted-foreground">暂无接收此对象类型的决策类型。</p>}
+          <Field label="新建案例标题" value={effectTitle} onChange={setEffectTitle} disabled={!canEdit} required />
+          <p className="text-xs text-muted-foreground">新案例以当前对象为根对象，进入案例工作流程。</p>
+        </>}
+        {effectType === 'create_review_request' && <>
+          <ObjectTypePicker label="核查请求对象类型" types={types} value={taskTypeKey}
+            onChange={setTaskTypeKey} disabled={!canEdit} />
+          <Field label="核查请求标题" value={effectTitle} onChange={setEffectTitle} disabled={!canEdit} required />
+          <p className="text-xs text-muted-foreground">将新建该类型的对象，写入 name、status、subjectObjectId 和 reason；请选择支持这些字段的已发布类型。</p>
+        </>}
+        {effectType === 'execute_action' && <>
+          <div className="space-y-1"><Label htmlFor="automation-action">Action</Label>
+            <Select id="automation-action" value={actionKey} disabled={!canEdit}
+              onChange={(event) => setActionKey(event.target.value)}>
+              <option value="">选择允许自动化的 Action</option>
+              {availableActions.map((item) => <option key={item.actionKey} value={item.actionKey}>{item.name} ({item.actionKey})</option>)}
+            </Select></div>
+          {!availableActions.length && <p className="text-sm text-muted-foreground">暂无符合自动化条件的 Action；需在 Action 定义中显式允许自动化，且仅更新触发对象。</p>}
+          <JsonField label="Action 参数（JSON 对象）" value={actionParams} onChange={setActionParams} rows={3} />
+          <p className="text-xs text-muted-foreground">例如 {'${object.reason}'} 会读取触发对象的 reason 属性；objectId 由系统自动传入。</p>
+        </>}
+      </section>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={enabled}
         disabled={!canEdit} onChange={(event) => setEnabled(event.target.checked)} />启用</label>
       {canEdit && <Button onClick={() => void save()}>保存规则</Button>}

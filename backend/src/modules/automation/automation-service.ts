@@ -72,7 +72,12 @@ export function upsertAutomation(input: unknown, actor: AuthUser) {
   const parsed = ruleSchema.safeParse(input);
   if (!parsed.success) throw new AppError('VALIDATION_ERROR', '自动化配置无效', parsed.error.flatten());
   const value = parsed.data;
-  expressionDependencies(resolveCondition(value.typeKey, value.expression, value.ruleKey));
+  const dependencies = expressionDependencies(resolveCondition(value.typeKey, value.expression, value.ruleKey));
+  const unavailable = dependencies.filter((dependency) =>
+    dependency !== 'object' && !dependency.startsWith('object.') && dependency !== 'now');
+  if (unavailable.length) {
+    throw new AppError('VALIDATION_ERROR', `自动化条件只能读取 object.属性名 或 now，不能读取: ${unavailable.join(', ')}`);
+  }
   if (value.effect.type === 'execute_action') assertAutomationActionSafe(value.effect.actionKey);
   const db = getDb();
   const id = value.id ?? newId('auto');
