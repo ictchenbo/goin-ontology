@@ -1,5 +1,5 @@
 /** 对象实例表单：按已发布模型生成属性编辑控件。 */
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
 import { Alert } from '@/components/ui/Alert';
@@ -30,24 +30,32 @@ export type ObjectType = { typeKey: string; displayName: string; state: string;
   createdAt?: string; updatedAt?: string;
   publishedDefinition: { properties: PropertyDef[] } };
 
-function ObjectTypePicker({ types, value, disabled, onChange }: {
-  types: ObjectType[]; value: string; disabled: boolean; onChange: (typeKey: string) => void;
+export function ObjectTypePicker({ types, value, disabled, onChange, label = '对象类型', allowEmpty = false }: {
+  types: Array<Pick<ObjectType, 'typeKey' | 'displayName' | 'state'>>;
+  value: string; disabled: boolean; onChange: (typeKey: string) => void;
+  label?: string; allowEmpty?: boolean;
 }) {
+  const id = useId();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const selected = types.find((type) => type.typeKey === value);
-  const matches = types.filter((type) => `${type.displayName} ${type.typeKey}`
-    .toLowerCase().includes(query.trim().toLowerCase()));
+  const normalizedQuery = query.trim().toLowerCase();
+  const matches = [
+    ...(allowEmpty && '全部对象类型'.includes(normalizedQuery) ?
+      [{ typeKey: '', displayName: '全部对象类型', state: 'published' }] : []),
+    ...types.filter((type) => `${type.displayName} ${type.typeKey}`
+      .toLowerCase().includes(normalizedQuery)),
+  ];
   return <div className="space-y-1" onBlurCapture={(event) => {
     if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
   }}>
-    <Label htmlFor="object-type-search">对象类型</Label>
+    <Label htmlFor={id}>{label}</Label>
     <div className="relative">
-      <Input id="object-type-search" role="combobox" aria-autocomplete="list"
-        aria-expanded={open} aria-controls="object-type-options"
-        aria-activedescendant={open && matches[active] ? `object-type-${matches[active].typeKey}` : undefined}
-        disabled={disabled} value={open ? query : selected ? `${selected.displayName} (${selected.typeKey})` : ''}
+      <Input id={id} role="combobox" aria-autocomplete="list"
+        aria-expanded={open} aria-controls={`${id}-options`}
+        aria-activedescendant={open && matches[active] ? `${id}-option-${active}` : undefined}
+        disabled={disabled} value={open ? query : selected ? `${selected.displayName} (${selected.typeKey})` : allowEmpty && !value ? '全部对象类型' : value}
         placeholder="搜索对象类型名称或标识"
         onFocus={() => { setQuery(''); setActive(0); setOpen(true); }}
         onClick={() => { if (!open) { setQuery(''); setActive(0); setOpen(true); } }}
@@ -66,24 +74,24 @@ function ObjectTypePicker({ types, value, disabled, onChange }: {
             }
           }
         }} />
-      {open && <div id="object-type-options" role="listbox" aria-label="对象类型搜索结果"
+      {open && <div id={`${id}-options`} role="listbox" aria-label="对象类型搜索结果"
         className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-border bg-card p-1 shadow-lg"
         onMouseDown={(event) => event.preventDefault()}>
         {matches.length ? matches.map((candidate, index) => candidate.state === 'published' ?
-          <button key={candidate.typeKey} id={`object-type-${candidate.typeKey}`} type="button" role="option"
+          <button key={candidate.typeKey} id={`${id}-option-${index}`} type="button" role="option"
             aria-selected={candidate.typeKey === value} onClick={() => { onChange(candidate.typeKey); setOpen(false); }}
             className={`block w-full rounded px-3 py-2 text-left text-sm hover:bg-accent ${index === active ? 'bg-accent' : ''}`}>
-            {candidate.displayName} <span className="font-mono text-xs text-muted-foreground">({candidate.typeKey})</span>
-          </button> : <div key={candidate.typeKey} id={`object-type-${candidate.typeKey}`} role="option"
+            {candidate.displayName} {candidate.typeKey && <span className="font-mono text-xs text-muted-foreground">({candidate.typeKey})</span>}
+          </button> : <div key={candidate.typeKey} id={`${id}-option-${index}`} role="option"
             aria-selected={false} aria-disabled="true" className={`flex items-center justify-between gap-2 rounded px-3 py-2 text-sm ${index === active ? 'bg-accent' : ''}`}>
             <span>{candidate.displayName} <span className="font-mono text-xs text-muted-foreground">({candidate.typeKey})</span>
-              <span className="ml-2 text-xs text-muted-foreground">{candidate.state === 'draft' ? '草稿，发布后可选' : '不可用于新建对象'}</span></span>
+              <span className="ml-2 text-xs text-muted-foreground">{candidate.state === 'draft' ? '草稿，发布后可选' : '当前不可选择'}</span></span>
             {candidate.state === 'draft' && <Link className="shrink-0 text-xs text-primary hover:underline"
               to={`/ontology/types/${encodeURIComponent(candidate.typeKey)}`}>前往发布</Link>}
           </div>) : <p className="px-3 py-2 text-sm text-muted-foreground">没有匹配的对象类型</p>}
       </div>}
     </div>
-    {!disabled && <p className="text-xs text-muted-foreground">按名称或标识搜索；草稿类型需发布后才能创建实例。</p>}
+    {!disabled && <p className="text-xs text-muted-foreground">按名称或标识搜索；草稿类型需发布后才能选择。</p>}
   </div>;
 }
 

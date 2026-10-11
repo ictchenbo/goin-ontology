@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input, Label, Select, Textarea } from '@/components/ui/Input';
 import { Table, TBody, TD, TH, THeader, TR } from '@/components/ui/Table';
 import { formatTime } from '@/lib/utils';
+import { ObjectTypePicker } from './ObjectEditorDialog';
 
 type Tab = 'types' | 'shared' | 'links' | 'actions' | 'rules' | 'functions' | 'interfaces' | 'automations';
 const TABS: Array<{ key: Tab; label: string }> = [
@@ -1309,11 +1310,19 @@ type RuleDef = { ruleKey: string; name: string; kind: string; description: strin
   outputType: string; scopeType: string; testCases: Array<{ input: Record<string, unknown>; expected: unknown }>;
   version?: number };
 const blankRule = (): RuleDef => ({ ruleKey: '', name: '', kind: 'derived_metric', description: '', expression: '', outputType: 'number', scopeType: '', testCases: [] });
+const RULE_OUTPUT_TYPES = [
+  { value: 'number', label: '数值（number）' },
+  { value: 'string', label: '文本（string）' },
+  { value: 'boolean', label: '布尔值（boolean）' },
+  { value: 'datetime', label: '日期时间（datetime）' },
+  { value: 'json', label: 'JSON（json）' },
+];
 
 function RuleManager({ initialKey, canEdit }: { initialKey: string; canEdit: boolean; canDelete: boolean }) {
   const navigate = useNavigate();
   const [selected, setSelected] = useState('');
   const [form, setForm] = useState<RuleDef>(blankRule());
+  const [types, setTypes] = useState<ObjectType[]>([]);
   const [testsText, setTestsText] = useState('[]');
   const [contextText, setContextText] = useState('{}');
   const [preview, setPreview] = useState<string | null>(null);
@@ -1321,7 +1330,12 @@ function RuleManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    if (initialKey !== 'new') choose(await api.get<RuleDef>(`/rules/${encodeURIComponent(initialKey)}`));
+    const [rule, typeResult] = await Promise.all([
+      initialKey === 'new' ? Promise.resolve(null) : api.get<RuleDef>(`/rules/${encodeURIComponent(initialKey)}`),
+      api.get<{ items: ObjectType[] }>('/ontology/types'),
+    ]);
+    if (rule) choose(rule);
+    setTypes(recentFirst(typeResult.items));
   }, [initialKey]);
   useEffect(() => { load().catch((e) => setError(message(e))); }, [load]);
   function choose(r: RuleDef) { setSelected(r.ruleKey); setForm(r); setTestsText(json(r.testCases)); setPreview(null); }
@@ -1338,8 +1352,15 @@ function RuleManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
         <div className="space-y-1"><Label htmlFor="rule-kind">规则类型</Label><Select id="rule-kind" value={form.kind} disabled={!canEdit} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
           {['derived_metric', 'constraint', 'trigger', 'score_normalizer'].map((v) => <option key={v}>{v}</option>)}
         </Select></div>
-        <Field label="适用对象类型" value={form.scopeType || ''} onChange={(v) => setForm({ ...form, scopeType: v })} disabled={!canEdit} />
-        <Field label="输出类型" value={form.outputType || ''} onChange={(v) => setForm({ ...form, outputType: v })} disabled={!canEdit} />
+        <ObjectTypePicker label="适用对象类型" types={types} value={form.scopeType || ''}
+          onChange={(scopeType) => setForm({ ...form, scopeType })} disabled={!canEdit} allowEmpty />
+        <div className="space-y-1"><Label htmlFor="rule-output-type">输出类型</Label>
+          <Select id="rule-output-type" value={form.outputType || 'number'} disabled={!canEdit}
+            onChange={(event) => setForm({ ...form, outputType: event.target.value })}>
+            {form.outputType && !RULE_OUTPUT_TYPES.some((item) => item.value === form.outputType) &&
+              <option value={form.outputType}>原有类型（{form.outputType}）</option>}
+            {RULE_OUTPUT_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </Select></div>
         <Field label="说明" value={form.description || ''} onChange={(v) => setForm({ ...form, description: v })} disabled={!canEdit} />
       </div>
       <div className="space-y-1"><Label htmlFor="rule-expression">DSL 表达式</Label><Textarea id="rule-expression" className="font-mono text-xs" rows={4} value={form.expression} disabled={!canEdit}
