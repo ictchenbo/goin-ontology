@@ -96,9 +96,13 @@ export function ModelStudioPage() {
   const canEdit = hasRole('admin', 'analyst');
   const canDelete = hasRole('admin');
   return <div className="space-y-5">
-    <div>
-      <h1 className="text-2xl font-bold">本体模型管理</h1>
-      <p className="mt-1 text-sm text-muted-foreground">管理类型属性、关系、动作、规则、函数和接口定义。</p>
+    <div className="flex flex-wrap items-start justify-between gap-3">
+      <div><h1 className="text-2xl font-bold">本体模型管理</h1>
+        <p className="mt-1 text-sm text-muted-foreground">管理类型属性、关系、动作、规则、函数和接口定义。</p></div>
+      <a href="/ontology-concepts.svg" target="_blank" rel="noopener noreferrer"
+        className="rounded-md border border-border px-3 py-2 text-sm font-medium text-primary hover:bg-muted">
+        查看概念关系图 <span className="sr-only">（新窗口打开）</span>
+      </a>
     </div>
     <div role="tablist" aria-label="模型配置类别" className="flex flex-wrap gap-2 border-b border-border pb-3">
       {TABS.map((item) => <Button key={item.key} role="tab" aria-selected={tab === item.key}
@@ -197,6 +201,7 @@ type Property = {
   min?: number; max?: number; enumValues?: string[]; refType?: string;
   sensitive?: string; description?: string; default?: unknown; showInList?: boolean;
   sharedKey?: string; sharedVersion?: number;
+  computed?: { functionKey: string; inputs: Record<string, string> };
 };
 type SharedProperty = { propertyKey: string; definition: Property; version: number; usedBy: string[] };
 type ObjectType = {
@@ -217,9 +222,10 @@ type PropertyEditState = {
   shared?: SharedProperty;
 };
 
-function PropertyEditorDialog({ editor, onClose, onSave }: {
+function PropertyEditorDialog({ editor, onClose, onSave, functions = [], availableProperties = [] }: {
   editor: PropertyEditState | null; onClose: () => void;
   onSave: (property: Property) => Promise<void> | void;
+  functions?: FunctionDef[]; availableProperties?: Property[];
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [draft, setDraft] = useState<Property>(blankProperty());
@@ -232,6 +238,8 @@ function PropertyEditorDialog({ editor, onClose, onSave }: {
     } else if (dialog.current?.open) dialog.current.close();
   }, [editor]);
   const set = (patch: Partial<Property>) => setDraft((old) => ({ ...old, ...patch }));
+  const local = editor?.kind === 'local-add' || editor?.kind === 'local-edit';
+  const selectedFunction = functions.find((fn) => fn.functionKey === draft.computed?.functionKey);
   async function save() {
     setError(null);
     const name = draft.name.trim();
@@ -244,12 +252,19 @@ function PropertyEditorDialog({ editor, onClose, onSave }: {
     if (draft.min !== undefined && draft.max !== undefined && draft.min > draft.max) {
       setError('最小值不能大于最大值'); return;
     }
+    if (draft.computed) {
+      if (!selectedFunction) { setError('请选择计算函数'); return; }
+      if (selectedFunction.parameters.some((parameter) => !draft.computed?.inputs[parameter])) {
+        setError('请为每个函数参数选择输入属性'); return;
+      }
+    }
     setSaving(true);
     try {
       const property: Property = { ...draft, name, label: draft.label.trim() };
       if (property.type !== 'enum') delete property.enumValues;
       if (property.type !== 'reference') delete property.refType;
       if (property.type !== 'number') { delete property.min; delete property.max; }
+      if (property.computed) { property.required = false; delete property.default; }
       await onSave(property);
       onClose();
     } catch (failure) { setError(message(failure)); }
@@ -272,17 +287,46 @@ function PropertyEditorDialog({ editor, onClose, onSave }: {
         <Field label="属性名" value={draft.name} onChange={(v) => set({ name: v })}
           disabled={editor?.kind === 'shared-edit'} required />
         <Field label="显示名" value={draft.label} onChange={(v) => set({ label: v })} required />
-        <div className="space-y-1"><Label htmlFor="property-dialog-type">类型</Label>
-          <Select id="property-dialog-type" value={draft.type} onChange={(event) => set({ type: event.target.value })}>
+        <div className="space-y-1"><Label htmlFor="property-dialog-type">{draft.computed ? '输出类型' : '类型'}</Label>
+          <Select id="property-dialog-type" value={draft.type} disabled={!!draft.computed} onChange={(event) => set({ type: event.target.value })}>
             {['string', 'number', 'boolean', 'datetime', 'enum', 'reference', 'json'].map((item) =>
               <option key={item} value={item}>{item}</option>)}
           </Select></div>
         <div className="flex items-end gap-5 pb-2">
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!draft.required}
+          <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!draft.required} disabled={!!draft.computed}
             onChange={(event) => set({ required: event.target.checked })} />必填</label>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!draft.showInList}
             onChange={(event) => set({ showInList: event.target.checked })} />列表显示</label>
         </div>
+        {local && <div className="sm:col-span-2 space-y-3 rounded-md border border-border p-3">
+          <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={!!draft.computed}
+            onChange={(event) => set({ computed: event.target.checked ? { functionKey: '', inputs: {} } : undefined,
+              required: event.target.checked ? false : draft.required })} />只读计算属性</label>
+          {draft.computed && <>
+            <div className="space-y-1"><Label htmlFor="property-computed-function">计算函数</Label>
+              <Select id="property-computed-function" value={draft.computed.functionKey}
+                onChange={(event) => {
+                  const fn = functions.find((item) => item.functionKey === event.target.value);
+                  set({ type: fn?.outputType ?? draft.type,
+                    computed: { functionKey: event.target.value, inputs: {} } });
+                }}>
+                <option value="">选择函数</option>
+                {functions.map((fn) => <option key={fn.functionKey} value={fn.functionKey}>
+                  {fn.name} ({fn.functionKey}) → {fn.outputType}</option>)}
+              </Select></div>
+            {selectedFunction?.parameters.map((parameter) => <div key={parameter} className="space-y-1">
+              <Label htmlFor={`property-input-${parameter}`}>参数 {parameter} 的输入属性</Label>
+              <Select id={`property-input-${parameter}`} value={draft.computed?.inputs[parameter] ?? ''}
+                onChange={(event) => set({ computed: { functionKey: draft.computed!.functionKey,
+                  inputs: { ...draft.computed!.inputs, [parameter]: event.target.value } } })}>
+                <option value="">选择普通属性</option>
+                {availableProperties.filter((property) => !property.computed && property.name !== draft.name)
+                  .map((property) => <option key={property.name} value={property.name}>
+                    {property.label} ({property.name}) · {property.type}</option>)}
+              </Select></div>)}
+            <p className="text-xs text-muted-foreground">读取对象时按当前函数版本计算；结果不会写入实例。普通属性改为计算属性时，发布版本需迁移旧字段。</p>
+          </>}
+        </div>}
         {draft.type === 'enum' && <Field label="枚举值（逗号分隔）" value={(draft.enumValues ?? []).join(', ')}
           onChange={(v) => set({ enumValues: v.split(',').map((part) => part.trim()).filter(Boolean) })} />}
         {draft.type === 'reference' && <Field label="引用对象类型" value={draft.refType ?? ''}
@@ -727,8 +771,12 @@ export function ObjectTypeDetailPage() {
   const { typeKey } = useParams();
   const { hasRole } = useAuth();
   return <div className="space-y-5">
-    <div><Link to="/ontology/types" className="text-sm text-primary hover:underline">← 返回对象类型列表</Link>
-      <h1 className="mt-2 text-2xl font-bold">对象类型及属性</h1></div>
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <div><Link to="/ontology/types" className="text-sm text-primary hover:underline">← 返回对象类型列表</Link>
+        <h1 className="mt-2 text-2xl font-bold">对象类型及属性</h1></div>
+      <a href="/ontology-concepts.svg" target="_blank" rel="noopener noreferrer"
+        className="text-sm font-medium text-primary hover:underline">查看概念关系图</a>
+    </div>
     {typeKey && <TypeManager typeKey={typeKey} canEdit={hasRole('admin', 'analyst')} canDelete={hasRole('admin')} />}
   </div>;
 }
@@ -756,6 +804,7 @@ export function ModelModuleDetailPage() {
 
 function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit: boolean; canDelete: boolean }) {
   const [interfaces, setInterfaces] = useState<InterfaceDef[]>([]);
+  const [functions, setFunctions] = useState<FunctionDef[]>([]);
   const [sharedProperties, setSharedProperties] = useState<SharedProperty[]>([]);
   const [selected, setSelected] = useState<ObjectType | null>(null);
   const [name, setName] = useState('');
@@ -781,10 +830,11 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
   }, []);
 
   const load = useCallback(async () => {
-    const [detail, f, s] = await Promise.all([api.get<ObjectType>(`/ontology/types/${encodeURIComponent(typeKey)}`),
+    const [detail, f, s, functionResult] = await Promise.all([api.get<ObjectType>(`/ontology/types/${encodeURIComponent(typeKey)}`),
       api.get<{ items: InterfaceDef[] }>('/ontology/interfaces'),
-      api.get<{ items: SharedProperty[] }>('/ontology/shared-properties')]);
-    setInterfaces(f.items); setSharedProperties(s.items);
+      api.get<{ items: SharedProperty[] }>('/ontology/shared-properties'),
+      api.get<{ items: FunctionDef[] }>('/functions')]);
+    setInterfaces(f.items); setSharedProperties(s.items); setFunctions(functionResult.items);
     setSelected(detail); setKey(detail.typeKey); setName(detail.displayName);
     setCategory(detail.category); setDescription(detail.description); setImplemented(detail.interfaces || []);
     setProperties(detail.definition.properties.map((p) => ({ ...p })));
@@ -922,14 +972,14 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
                   return <TR key={`${property.name}-${index}`}>
                     <TD className="font-mono text-xs">{property.name}</TD>
                     <TD>{property.label}</TD><TD>{property.type}</TD>
-                    <TD className="text-xs">{property.sharedKey ? <>
+                    <TD className="text-xs">{property.computed ? <span className="text-primary">计算 · {property.computed.functionKey}</span> : property.sharedKey ? <>
                       <span className="text-primary">共享 v{property.sharedVersion}</span>
                       {outdated && <span className="ml-1 text-amber-600 dark:text-amber-400">有 v{source.version} 更新</span>}
                     </> : '本地'}</TD>
-                    <TD className="text-xs text-muted-foreground">{property.required ? '必填 ' : ''}{property.showInList ? '列表显示' : ''}</TD>
+                    <TD className="text-xs text-muted-foreground">{property.computed ? '只读 ' : ''}{property.required ? '必填 ' : ''}{property.showInList ? '列表显示' : ''}</TD>
                     <TD><div className="flex flex-wrap gap-1">
                       {canEdit && <Button size="sm" variant="ghost" onClick={() => setPropertyEditor({ kind: 'local-edit', initial: property, index })}>修改</Button>}
-                      {canEdit && !property.sharedKey && (sameNameSource ?
+                      {canEdit && !property.sharedKey && !property.computed && (sameNameSource ?
                         <Button size="sm" variant="outline" onClick={() => {
                           setProperties(properties.map((item, position) => position === index ?
                             { ...sameNameSource.definition, sharedKey: sameNameSource.propertyKey, sharedVersion: sameNameSource.version } : item));
@@ -999,7 +1049,8 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
               }))}>发布回滚版本</Button>
           </div>}
         </CardContent></Card> : !error && <Card><CardContent className="pt-5 text-sm text-muted-foreground">正在加载对象类型…</CardContent></Card>}
-      <PropertyEditorDialog editor={propertyEditor} onClose={() => setPropertyEditor(null)} onSave={saveProperty} />
+      <PropertyEditorDialog editor={propertyEditor} onClose={() => setPropertyEditor(null)} onSave={saveProperty}
+        functions={functions} availableProperties={properties} />
       <SharedPickerDialog open={sharedPickerOpen} items={sharedProperties} usedNames={properties.map((item) => item.name)}
         onClose={() => setSharedPickerOpen(false)} onAttach={attachShared} />
     </div>

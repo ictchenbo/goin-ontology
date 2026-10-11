@@ -4,6 +4,7 @@ import { newId } from '../../shared/ids';
 import { AppError } from '../../shared/errors';
 import { writeAudit } from '../audit/audit-service';
 import { stableStringify } from '../../shared/hash';
+import { getFunction } from '../functions/function-service';
 
 export type PropertyType =
   | 'string' | 'number' | 'boolean' | 'datetime' | 'enum' | 'reference' | 'json';
@@ -26,6 +27,8 @@ export interface PropertyDef {
   /** 共享属性来源；定义快照仍属于当前类型版本。 */
   sharedKey?: string;
   sharedVersion?: number;
+  /** 只读计算属性：参数名映射到当前对象类型的普通属性名。 */
+  computed?: { functionKey: string; inputs: Record<string, string> };
 }
 
 export interface TypeDefinition {
@@ -93,6 +96,24 @@ export function validateDefinition(def: TypeDefinition): void {
     if (p.type === 'reference' && !p.refType) {
       throw new AppError('SCHEMA_ERROR', `引用属性 ${p.name} 缺少 refType`);
     }
+    if (p.computed) {
+      if (p.sharedKey || p.sharedVersion) throw new AppError('SCHEMA_ERROR', `计算属性 ${p.name} 不能引用共享定义`);
+      if (p.required || p.default !== undefined) throw new AppError('SCHEMA_ERROR', `计算属性 ${p.name} 不能设置必填或默认值`);
+      if (!p.computed.functionKey || !p.computed.inputs || typeof p.computed.inputs !== 'object' ||
+        Array.isArray(p.computed.inputs)) throw new AppError('SCHEMA_ERROR', `计算属性 ${p.name} 缺少函数或输入映射`);
+      const fn = getFunction(p.computed.functionKey);
+      if (fn.outputType !== p.type) throw new AppError('SCHEMA_ERROR', `计算属性 ${p.name} 的输出类型与函数不一致`);
+      if (fn.parameters.length !== Object.keys(p.computed.inputs).length ||
+        fn.parameters.some((parameter) => !Object.hasOwn(p.computed!.inputs, parameter))) {
+        throw new AppError('SCHEMA_ERROR', `计算属性 ${p.name} 的输入映射与函数参数不一致`);
+      }
+      for (const source of Object.values(p.computed.inputs)) {
+        if (typeof source !== 'string' || !def.properties.some((candidate) =>
+          candidate.name === source && !candidate.computed)) {
+          throw new AppError('SCHEMA_ERROR', `计算属性 ${p.name} 的输入属性不存在或不是普通属性: ${String(source)}`);
+        }
+      }
+    }
     if (p.sharedKey !== undefined || p.sharedVersion !== undefined) {
       if (!p.sharedKey || !Number.isInteger(p.sharedVersion) || p.sharedVersion! < 1) {
         throw new AppError('SCHEMA_ERROR', `共享属性 ${p.name} 缺少有效来源版本`);
@@ -106,6 +127,10 @@ export function validateDefinition(def: TypeDefinition): void {
         throw new AppError('SCHEMA_ERROR', `共享属性 ${p.name} 与引用版本不一致，请同步或解除共享引用`);
       }
     }
+  }
+  if (def.displayProperty && def.properties.some((property) =>
+    property.name === def.displayProperty && property.computed)) {
+    throw new AppError('SCHEMA_ERROR', '标题字段不能使用只读计算属性');
   }
 }
 
@@ -332,6 +357,7 @@ export function analyzeBreakingChange(oldDef: TypeDefinition, newDef: TypeDefini
       continue;
     }
     if (np.type !== op.type) issues.push(`字段 ${name} 类型变化 ${op.type}->${np.type}`);
+    if (!op.computed && np.computed) issues.push(`字段 ${name} 改为只读计算属性`);
     if (np.required && !op.required) issues.push(`字段 ${name} 变为必填`);
     if (op.type === 'enum' && np.type === 'enum') {
       const removed = (op.enumValues || []).filter((v) => !(np.enumValues || []).includes(v));
@@ -399,6 +425,12 @@ export function publishVersionWithMigration(
   for (const p of removed) {
     if (!migration?.dropFields?.includes(p.name) && !migration?.renameMap?.[p.name]) {
       throw new AppError('SCHEMA_ERROR', `删除属性 ${p.name} 需要 dropFields 或 renameMap 迁移规则`);
+    }
+  }
+  for (const previous of published?.definition.properties ?? []) {
+    const next = target.definition.properties.find((property: PropertyDef) => property.name === previous.name);
+    if (!previous.computed && next?.computed && !migration?.dropFields?.includes(previous.name)) {
+      throw new AppError('SCHEMA_ERROR', `字段 ${previous.name} 改为计算属性需要 dropFields 迁移规则`);
     }
   }
 
@@ -849,6 +881,10 @@ export function validatePayload(typeKey: string, payload: Record<string, unknown
   const errors: string[] = [];
   const out: Record<string, unknown> = {};
   for (const p of def.properties) {
+    if (p.computed) {
+      if (Object.hasOwn(payload, p.name)) errors.push(`计算属性不可写入: ${p.name}`);
+      continue;
+    }
     const v = payload[p.name];
     if (v === undefined || v === null || v === '') {
       if (p.required) errors.push(`缺少必填属性: ${p.name}`);

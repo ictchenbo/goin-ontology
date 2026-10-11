@@ -4,7 +4,8 @@ import { newId } from '../../shared/ids';
 import { AppError } from '../../shared/errors';
 import { stableHash } from '../../shared/hash';
 import { writeAudit } from '../audit/audit-service';
-import { validatePayload, getType } from '../ontology/ontology-service';
+import { validatePayload, getType, type PropertyDef } from '../ontology/ontology-service';
+import { evaluateFunction } from '../functions/function-service';
 import { clearanceAllows, redactFields, requireObjectAccess, AuthUser } from '../auth/auth-service';
 import { invalidateCasesForObject } from '../decision/staleness-service';
 
@@ -157,13 +158,14 @@ export function getObject(objectId: string, opts: { actor?: AuthUser; includeHis
   if (opts.actor && !clearanceAllows(opts.actor, labels)) {
     throw new AppError('FORBIDDEN', '密级不足，无法读取该对象');
   }
-  const payload = JSON.parse(row.payload_json);
+  const computed = readPayload(row.type_key, JSON.parse(row.payload_json), opts.actor);
   return {
     objectId: row.object_id,
     typeKey: row.type_key,
     typeDisplay: safeTypeDisplay(row.type_key),
     title: row.title,
-    payload: opts.actor ? redactFields(opts.actor, payload, row.type_key) : payload,
+    payload: computed.payload,
+    computedErrors: computed.errors,
     revision: row.revision,
     schemaVersion: row.schema_version,
     securityLabels: labels,
@@ -173,6 +175,29 @@ export function getObject(objectId: string, opts: { actor?: AuthUser; includeHis
     links: getLinksOfObject(objectId, opts.actor),
     evidence: getEvidenceOfObject(objectId, opts.actor),
   };
+}
+
+// 先按读取者权限过滤输入，再计算只读属性；计算结果仍经过字段权限过滤。
+function readPayload(typeKey: string, stored: Record<string, unknown>, actor?: AuthUser) {
+  const visible = actor ? redactFields(actor, stored, typeKey) : { ...stored };
+  const errors: Record<string, string> = {};
+  for (const property of getType(typeKey).publishedDefinition.properties as PropertyDef[]) {
+    if (!property.computed) continue;
+    delete visible[property.name];
+    const args: Record<string, unknown> = {};
+    let available = true;
+    for (const [parameter, source] of Object.entries(property.computed.inputs)) {
+      if (!Object.hasOwn(visible, source) || visible[source] === null) { available = false; break; }
+      args[parameter] = visible[source];
+    }
+    if (!available) continue;
+    try {
+      visible[property.name] = evaluateFunction(property.computed.functionKey, args).result;
+    } catch (error) {
+      errors[property.name] = error instanceof Error ? error.message : '计算失败';
+    }
+  }
+  return { payload: actor ? redactFields(actor, visible, typeKey) : visible, errors };
 }
 
 function safeTypeDisplay(typeKey: string): string {
@@ -316,9 +341,7 @@ export function queryObjects(query: QueryInput, user?: AuthUser) {
       revision: r.revision,
       securityLabels: JSON.parse(r.security_labels || '[]'),
       updatedAt: r.updated_at,
-      preview: user
-        ? redactFields(user, JSON.parse(r.payload_json), r.type_key)
-        : JSON.parse(r.payload_json),
+      preview: readPayload(r.type_key, JSON.parse(r.payload_json), user).payload,
     })),
     total,
     limit,

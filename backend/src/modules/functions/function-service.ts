@@ -60,6 +60,14 @@ function references(functionKey: string): string[] {
   for (const row of db.prepare('SELECT function_key, expression FROM function_def WHERE function_key != ?').all(functionKey) as any[]) {
     if (call.test(String(row.expression))) refs.push(`function:${row.function_key}`);
   }
+  for (const row of db.prepare(`SELECT tv.type_key, tv.definition_json FROM type_version tv
+    JOIN ontology_type ot ON ot.type_key = tv.type_key
+    WHERE tv.state IN ('draft', 'published') AND ot.state != 'archived'`).all() as any[]) {
+    const definition = JSON.parse(row.definition_json) as { properties?: Array<{ computed?: { functionKey?: string } }> };
+    if (definition.properties?.some((property) => property.computed?.functionKey === functionKey)) {
+      refs.push(`type:${row.type_key}`);
+    }
+  }
   return refs;
 }
 
@@ -86,8 +94,9 @@ export function upsertFunction(input: FunctionInput, actor: string) {
   const existing = db.prepare('SELECT * FROM function_def WHERE function_key = ?').get(key) as any;
   if (existing) {
     const previous = JSON.parse(existing.parameters_json) as string[];
-    if (JSON.stringify(previous) !== JSON.stringify(parameters) && references(key).length) {
-      throw new AppError('CONFLICT', '函数已有引用，不能更改参数签名');
+    if ((JSON.stringify(previous) !== JSON.stringify(parameters) || existing.output_type !== (input.outputType ?? 'number')) &&
+      references(key).length) {
+      throw new AppError('CONFLICT', '函数已有引用，不能更改参数签名或输出类型');
     }
     db.prepare(`UPDATE function_def SET name = ?, description = ?, parameters_json = ?, expression = ?,
       output_type = ?, version = version + 1, updated_at = ? WHERE function_key = ?`).run(
@@ -135,6 +144,16 @@ function resolveFunction(functionKey: string, args: unknown[]): unknown {
     }
     if (def.outputType === 'string' && typeof result !== 'string') {
       throw new AppError('VALIDATION_ERROR', `函数 ${functionKey} 输出不是字符串`);
+    }
+    if (def.outputType === 'datetime' && (typeof result !== 'string' || Number.isNaN(Date.parse(result)))) {
+      throw new AppError('VALIDATION_ERROR', `函数 ${functionKey} 输出不是有效日期时间`);
+    }
+    if (def.outputType === 'json') {
+      try {
+        if (JSON.stringify(result) === undefined) throw new Error('undefined');
+      } catch {
+        throw new AppError('VALIDATION_ERROR', `函数 ${functionKey} 输出不是有效 JSON`);
+      }
     }
     return result;
   } finally {

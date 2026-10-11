@@ -96,9 +96,15 @@ export function ObjectDetailPage() {
         {Object.keys(payload).length ? <div className="rounded-md border border-border"><Table><THeader><TR>
           <TH>属性</TH><TH>值</TH>
         </TR></THeader><TBody>{Object.entries(payload).map(([name, value]) => <TR key={name}>
-          <TD className="w-52"><span className="font-medium">{labelOf(name)}</span><div className="font-mono text-xs text-muted-foreground">{name}</div></TD>
+          <TD className="w-52"><span className="font-medium">{labelOf(name)}</span>
+            {properties.find((property) => property.name === name)?.computed &&
+              <span className="ml-2 text-xs text-primary">计算 · 只读</span>}
+            <div className="font-mono text-xs text-muted-foreground">{name}</div></TD>
           <TD><pre className="whitespace-pre-wrap break-all font-sans text-sm">{valueText(value)}</pre></TD>
         </TR>)}</TBody></Table></div> : <p className="text-sm text-muted-foreground">暂无属性</p>}
+        {detail.computedErrors && Object.keys(detail.computedErrors).length > 0 &&
+          <div className="mt-3"><Alert variant="error">计算属性失败：{Object.entries(detail.computedErrors)
+            .map(([name, reason]) => `${labelOf(name)}：${reason}`).join('；')}</Alert></div>}
       </CardContent></Card>
 
       <Card><CardHeader><CardTitle>关联（{detail.links?.length || 0}）</CardTitle></CardHeader><CardContent>

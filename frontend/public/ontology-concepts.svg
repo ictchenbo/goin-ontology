@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100" role="img" aria-labelledby="title description">
+  <title id="title">OODA 本体模型概念关系图</title>
+  <desc id="description">定义层包含接口、共享属性、对象类型、普通属性、只读计算属性和关系类型；逻辑层包含函数、规则、Action、自动化和决策类型；运行层包含对象实例、关系实例、证据与决策案例。计算属性将普通属性映射到函数参数，在读取对象时计算，不写入实例。</desc>
+  <defs>
+    <linearGradient id="background" x2="1" y2="1"><stop stop-color="#f8fbff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="170%"><feDropShadow dx="0" dy="5" stdDeviation="9" flood-color="#142d56" flood-opacity=".09"/></filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <style>
+      text { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #172b4d; }
+      .title { font-size: 35px; font-weight: 750; }
+      .subtitle { font-size: 16px; fill: #526580; }
+      .lane-title { font-size: 21px; font-weight: 700; }
+      .box-title { font-size: 21px; font-weight: 700; }
+      .box-sub { font-size: 14px; fill: #526580; }
+      .tag { font-size: 12px; font-weight: 700; }
+      .edge { fill: none; stroke: #6f85aa; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
+      .edge-strong { stroke: #2b62dc; stroke-width: 3.3; }
+      .edge-label { font-size: 12px; font-weight: 700; fill: #334b70; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1100" fill="url(#background)"/>
+  <text class="title" x="60" y="68">OODA 本体模型 · 概念关系</text>
+  <text class="subtitle" x="62" y="99">蓝线突出只读计算属性的读取路径；其余连线表示定义、调用或实例化关系。</text>
+  <rect x="48" y="136" width="600" height="887" rx="24" fill="#eaf1ff" stroke="#d6e3fd"/>
+  <rect x="680" y="136" width="440" height="887" rx="24" fill="#eaf9f5" stroke="#d3ece4"/>
+  <rect x="1152" y="136" width="400" height="887" rx="24" fill="#fff5e8" stroke="#f5e5cf"/>
+  <text class="lane-title" x="78" y="181" fill="#1d4ed8">定义层 · 建模</text>
+  <text class="lane-title" x="710" y="181" fill="#08775c">逻辑层 · 决策与执行</text>
+  <text class="lane-title" x="1182" y="181" fill="#a66512">运行层 · 业务数据</text>
+
+  <!-- 连线先绘制，确保卡片位于连线上方。 -->
+  <g color="#6f85aa">
+    <path class="edge" d="M202 295 V346"/><text class="edge-label" x="213" y="328">实现契约</text>
+    <path class="edge" d="M490 295 V535 H244 V550"/><text class="edge-label" x="360" y="522">引用定义</text>
+    <path class="edge" d="M350 480 V550"/><text class="edge-label" x="360" y="522">定义属性</text>
+    <path class="edge" d="M325 602 H375"/><text class="edge-label" x="330" y="587">输入</text>
+    <path class="edge edge-strong" d="M745 253 H662 V602 H620"/><text class="edge-label" x="666" y="505">函数求值</text>
+    <path class="edge" d="M910 295 V365"/><text class="edge-label" x="924" y="337">调用</text>
+    <path class="edge" d="M910 460 V535 H1000 V730"/><text class="edge-label" x="1012" y="507">触发条件</text>
+    <path class="edge" d="M825 730 V645"/><text class="edge-label" x="734" y="687">执行动作</text>
+    <path class="edge" d="M745 955 H1125 V955 H1190"/><text class="edge-label" x="1092" y="943">定义流程</text>
+    <path class="edge" d="M325 782 H1138 V412 H1190"/><text class="edge-label" x="1122" y="771">约束连接</text>
+    <path class="edge" d="M450 430 H658 V319 H1140 V250 H1190"/><text class="edge-label" x="1077" y="309">实例化</text>
+    <path class="edge edge-strong" d="M520 655 V697 H1140 V283 H1190"/><text class="edge-label" x="552" y="687">读取时附加结果</text>
+    <path class="edge" d="M1075 602 H1132 V274 H1190"/><text class="edge-label" x="1076" y="590">修改实例</text>
+    <path class="edge" d="M1347 295 V365"/><text class="edge-label" x="1360" y="335">参与连接</text>
+    <path class="edge" d="M1505 269 H1517 V777 H1505"/><text class="edge-label" x="1415" y="723">附着证据</text>
+    <path class="edge" d="M1505 250 H1530 V955 H1505"/><text class="edge-label" x="1456" y="682">作为决策上下文</text>
+  </g>
+
+  <!-- 定义层 -->
+  <g filter="url(#shadow)">
+    <rect x="80" y="205" width="245" height="90" rx="15" fill="#fff" stroke="#b6ccf7"/>
+    <rect x="375" y="205" width="245" height="90" rx="15" fill="#fff" stroke="#b6ccf7"/>
+    <rect x="80" y="365" width="540" height="115" rx="17" fill="#fff" stroke="#a6c3ff" stroke-width="2"/>
+    <rect x="80" y="550" width="245" height="105" rx="15" fill="#fff" stroke="#b6ccf7"/>
+    <rect x="375" y="550" width="245" height="105" rx="15" fill="#f7faff" stroke="#3f75df" stroke-width="2"/>
+    <rect x="80" y="730" width="540" height="105" rx="17" fill="#fff" stroke="#b6ccf7"/>
+  </g>
+  <text class="box-title" x="101" y="242">Interface</text><text class="box-sub" x="101" y="268">类型必须满足的属性契约</text>
+  <text class="box-title" x="396" y="242">共享属性</text><text class="box-sub" x="396" y="268">可被多个类型引用的定义</text>
+  <text class="box-title" x="103" y="406">对象类型</text><text class="box-sub" x="103" y="436">属性集合、分类、版本与实现的接口</text>
+  <text class="box-title" x="101" y="590">普通属性</text><text class="box-sub" x="101" y="619">实例中存储的原始业务值</text>
+  <text class="box-title" x="396" y="590">只读计算属性</text><text class="box-sub" x="396" y="619">输入属性 → 函数 → 输出类型</text>
+  <text class="box-title" x="103" y="771">关系 Link 类型</text><text class="box-sub" x="103" y="802">约束两个对象类型之间的连接</text>
+
+  <!-- 逻辑层 -->
+  <g filter="url(#shadow)">
+    <rect x="745" y="205" width="330" height="90" rx="15" fill="#fff" stroke="#b5ded1"/>
+    <rect x="745" y="365" width="330" height="95" rx="15" fill="#fff" stroke="#b5ded1"/>
+    <rect x="745" y="550" width="330" height="95" rx="15" fill="#fff" stroke="#b5ded1"/>
+    <rect x="745" y="730" width="330" height="95" rx="15" fill="#fff" stroke="#b5ded1"/>
+    <rect x="745" y="910" width="330" height="90" rx="15" fill="#fff" stroke="#b5ded1"/>
+  </g>
+  <text class="box-title" x="768" y="243">函数 Function</text><text class="box-sub" x="768" y="271">可复用的表达式计算</text>
+  <text class="box-title" x="768" y="404">规则 Rule</text><text class="box-sub" x="768" y="432">指标、约束、触发与评分归一化</text>
+  <text class="box-title" x="768" y="590">Action</text><text class="box-sub" x="768" y="619">校验并写入对象等受控效果</text>
+  <text class="box-title" x="768" y="770">自动化</text><text class="box-sub" x="768" y="799">监听对象变化，评估条件后执行</text>
+  <text class="box-title" x="768" y="949">决策类型</text><text class="box-sub" x="768" y="978">定义案例的目标、准则与约束</text>
+
+  <!-- 运行层 -->
+  <g filter="url(#shadow)">
+    <rect x="1190" y="205" width="315" height="90" rx="15" fill="#fff" stroke="#edce9d"/>
+    <rect x="1190" y="365" width="315" height="95" rx="15" fill="#fff" stroke="#edce9d"/>
+    <rect x="1190" y="730" width="315" height="95" rx="15" fill="#fff" stroke="#edce9d"/>
+    <rect x="1190" y="910" width="315" height="90" rx="15" fill="#fff" stroke="#edce9d"/>
+  </g>
+  <text class="box-title" x="1212" y="243">对象实例</text><text class="box-sub" x="1212" y="271">保存普通属性；读取时显示计算值</text>
+  <text class="box-title" x="1212" y="404">关系实例</text><text class="box-sub" x="1212" y="432">两个对象之间的实际连接</text>
+  <text class="box-title" x="1212" y="770">证据 / 来源记录</text><text class="box-sub" x="1212" y="799">支撑对象事实与追溯</text>
+  <text class="box-title" x="1212" y="949">决策案例</text><text class="box-sub" x="1212" y="978">基于对象上下文形成决策记录</text>
+
+  <rect x="56" y="1044" width="1488" height="35" rx="9" fill="#e4ecfa"/>
+  <text x="78" y="1067" font-size="14" fill="#415675">计算属性不写入实例或修订历史；函数表达式更新后，下次读取使用当前函数版本重新计算。</text>
+</svg>

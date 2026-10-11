@@ -13,6 +13,7 @@ export interface ObjectInstance {
   status?: string;
   updatedAt?: string;
   payload?: Record<string, unknown>;
+  computedErrors?: Record<string, string>;
   properties?: Record<string, unknown>;
   links?: Array<{ linkId: string; linkKey: string; otherObject?: { objectId: string; title: string }; direction?: string }>;
   evidence?: Array<{ id: string; sourceKey?: string; confidence?: number; observedAt?: string; stance?: string; status?: string }>;
@@ -21,7 +22,8 @@ export interface ObjectInstance {
 }
 
 type PropertyDef = { name: string; label: string; type: string; required?: boolean;
-  enumValues?: string[]; refType?: string; description?: string };
+  enumValues?: string[]; refType?: string; description?: string;
+  computed?: { functionKey: string; inputs: Record<string, string> } };
 export type ObjectType = { typeKey: string; displayName: string; state: string;
   publishedDefinition: { properties: PropertyDef[] } };
 
@@ -58,6 +60,7 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
       if (!type) throw new Error('请选择已发布的对象类型');
       const payload = { ...values };
       for (const property of type.publishedDefinition.properties) {
+        if (property.computed) { delete payload[property.name]; continue; }
         const value = payload[property.name];
         if (value === '' || value === undefined) {
           if (property.required) throw new Error(`请填写 ${property.label || property.name}`);
@@ -94,7 +97,7 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
       <div><Label htmlFor="object-title">标题{item ? '' : '（留空则按模型生成）'}</Label>
         <Input id="object-title" value={title} onChange={(event) => setTitle(event.target.value)} /></div>
       {type?.typeKey === typeKey && <div className="grid gap-4 sm:grid-cols-2">
-        {type.publishedDefinition.properties.map((property) => <div key={property.name} className="space-y-1">
+        {type.publishedDefinition.properties.filter((property) => !property.computed).map((property) => <div key={property.name} className="space-y-1">
           <Label htmlFor={`object-${property.name}`}>{property.label || property.name}{property.required ? ' *' : ''}</Label>
           {property.type === 'boolean' ? <Select id={`object-${property.name}`}
             value={values[property.name] === undefined ? '' : String(values[property.name])}
