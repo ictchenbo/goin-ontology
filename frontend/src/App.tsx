@@ -6,7 +6,7 @@ import { useAuth } from './lib/auth';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
-import { ModelStudioPage, ObjectTypeDetailPage } from './pages/ModelStudioPage';
+import { ModelStudioPage, ObjectTypeDetailPage, ModelModuleDetailPage } from './pages/ModelStudioPage';
 import { ObjectsPage } from './pages/ObjectsPage';
 import { CasesPage } from './pages/CasesPage';
 import { CaseDetailPage } from './pages/CaseDetailPage';
@@ -41,6 +41,8 @@ export default function App() {
         <Route path="ontology" element={<ModelStudioPage />} />
         <Route path="ontology/types" element={<ModelStudioPage />} />
         <Route path="ontology/types/:typeKey" element={<ObjectTypeDetailPage />} />
+        <Route path="ontology/:module" element={<ModelStudioPage />} />
+        <Route path="ontology/:module/:itemKey" element={<ModelModuleDetailPage />} />
         <Route path="objects" element={<ObjectsPage />} />
         <Route path="cases" element={<CasesPage />} />
         <Route path="cases/:caseId" element={<CaseDetailPage />} />

@@ -10,9 +10,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input, Label, Select, Textarea } from '@/components/ui/Input';
 import { Table, TBody, TD, TH, THeader, TR } from '@/components/ui/Table';
 
-type Tab = 'types' | 'links' | 'actions' | 'rules' | 'functions' | 'interfaces' | 'automations';
+type Tab = 'types' | 'shared' | 'links' | 'actions' | 'rules' | 'functions' | 'interfaces' | 'automations';
 const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'types', label: '对象类型与属性' },
+  { key: 'shared', label: '共享属性' },
   { key: 'links', label: '关系 Link' },
   { key: 'actions', label: 'Action' },
   { key: 'rules', label: '规则' },
@@ -68,8 +69,10 @@ function JsonField({ label, value, onChange, rows = 5 }: {
 export function ModelStudioPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { module } = useParams();
   const requestedTab = new URLSearchParams(location.search).get('tab');
-  const tab: Tab = TABS.some((item) => item.key === requestedTab) ? requestedTab as Tab : 'types';
+  const selectedTab = module ?? requestedTab;
+  const tab: Tab = TABS.some((item) => item.key === selectedTab) ? selectedTab as Tab : 'types';
   const { hasRole } = useAuth();
   const canEdit = hasRole('admin', 'analyst');
   const canDelete = hasRole('admin');
@@ -81,17 +84,13 @@ export function ModelStudioPage() {
     <div role="tablist" aria-label="模型配置类别" className="flex flex-wrap gap-2 border-b border-border pb-3">
       {TABS.map((item) => <Button key={item.key} role="tab" aria-selected={tab === item.key}
         variant={tab === item.key ? 'primary' : 'outline'} size="sm"
-        onClick={() => navigate(item.key === 'types' ? '/ontology/types' : `/ontology?tab=${item.key}`)}>
+        onClick={() => navigate(`/ontology/${item.key}`)}>
         {item.label}
       </Button>)}
     </div>
     {tab === 'types' && <ObjectTypeList canEdit={canEdit} canDelete={canDelete} />}
-    {tab === 'links' && <LinkManager canEdit={canEdit} canDelete={canDelete} />}
-    {tab === 'actions' && <ActionManager canEdit={canEdit} canDelete={canDelete} />}
-    {tab === 'rules' && <RuleManager canEdit={canEdit} canDelete={canDelete} />}
-    {tab === 'functions' && <FunctionManager canEdit={canEdit} canDelete={canDelete} />}
-    {tab === 'interfaces' && <InterfaceManager canEdit={canEdit} canDelete={canDelete} />}
-    {tab === 'automations' && <AutomationManager canEdit={canDelete} />}
+    {tab === 'shared' && <SharedPropertyList canEdit={canEdit} />}
+    {tab !== 'types' && tab !== 'shared' && <ModelModuleList key={tab} tab={tab} canEdit={canEdit} canDelete={canDelete} />}
   </div>;
 }
 
@@ -101,8 +100,8 @@ type Automation = {
   effect: Record<string, unknown>;
 };
 
-function AutomationManager({ canEdit }: { canEdit: boolean }) {
-  const [rules, setRules] = useState<Automation[]>([]);
+function AutomationManager({ initialKey, canEdit }: { initialKey: string; canEdit: boolean }) {
+  const navigate = useNavigate();
   const [runs, setRuns] = useState<Array<{ id: string; ruleId: string; status: string; objectId: string }>>([]);
   const [id, setId] = useState('');
   const [name, setName] = useState('');
@@ -117,9 +116,13 @@ function AutomationManager({ canEdit }: { canEdit: boolean }) {
       api.get<{ items: Automation[] }>('/automations'),
       api.get<{ items: Array<{ id: string; ruleId: string; status: string; objectId: string }> }>('/automations/runs'),
     ]);
-    setRules(ruleResponse.items);
-    setRuns(runResponse.items);
-  }, []);
+    if (initialKey !== 'new') {
+      const selected = ruleResponse.items.find((rule) => rule.id === initialKey);
+      if (!selected) throw new Error(`自动化规则不存在: ${initialKey}`);
+      edit(selected);
+    }
+    setRuns(runResponse.items.filter((run) => run.ruleId === initialKey));
+  }, [initialKey]);
   useEffect(() => { void refresh().catch((e) => setError(message(e))); }, [refresh]);
   function edit(rule: Automation) {
     setId(rule.id); setName(rule.name); setTypeKey(rule.condition.typeKey);
@@ -128,15 +131,16 @@ function AutomationManager({ canEdit }: { canEdit: boolean }) {
   async function save() {
     setError(null); setInfo(null);
     try {
-      await api.post('/automations', { ...(id ? { id } : {}), name, typeKey,
+      const saved = await api.post<Automation>('/automations', { ...(id ? { id } : {}), name, typeKey,
         expression, effect: parseJson(effect, '效果配置'), enabled });
       await refresh();
       setInfo('自动化规则已保存');
+      if (initialKey === 'new') navigate(`/ontology/automations/${encodeURIComponent(saved.id)}`);
     } catch (e) { setError(message(e)); }
   }
   return <div className="space-y-4">
     <Notice error={error} info={info} />
-    <Card><CardHeader><CardTitle>对象变更触发</CardTitle></CardHeader><CardContent className="space-y-3">
+    <Card><CardHeader><CardTitle>{initialKey === 'new' ? '新建自动化规则' : `编辑 ${initialKey}`}</CardTitle></CardHeader><CardContent className="space-y-3">
       <p className="text-sm text-muted-foreground">触发结果限于创建案例或人工核查请求；表达式采用受限 DSL。</p>
       <div className="grid gap-3 md:grid-cols-2"><Field label="规则名称" value={name} onChange={setName} disabled={!canEdit} required />
         <Field label="对象类型" value={typeKey} onChange={setTypeKey} disabled={!canEdit} required /></div>
@@ -146,13 +150,10 @@ function AutomationManager({ canEdit }: { canEdit: boolean }) {
         disabled={!canEdit} onChange={(event) => setEnabled(event.target.checked)} />启用</label>
       {canEdit && <Button onClick={() => void save()}>保存规则</Button>}
     </CardContent></Card>
-    <Card><CardHeader><CardTitle>规则与运行记录</CardTitle></CardHeader><CardContent className="space-y-3">
-      {rules.map((rule) => <button key={rule.id} className="block w-full rounded-md border border-border p-2 text-left text-sm"
-        onClick={() => edit(rule)}><strong>{rule.name}</strong> · {rule.condition.typeKey} · {rule.enabled ? '启用' : '停用'}
-        <div className="text-muted-foreground">{rule.condition.expression}</div></button>)}
-      <div className="text-sm font-semibold">最近运行</div>
+    <Card><CardHeader><CardTitle>最近运行</CardTitle></CardHeader><CardContent className="space-y-3">
       {runs.slice(0, 20).map((run) => <div key={run.id} className="text-xs text-muted-foreground">
         {run.status} · {run.ruleId} · {run.objectId}</div>)}
+      {!runs.length && <p className="text-sm text-muted-foreground">暂无运行记录</p>}
     </CardContent></Card>
   </div>;
 }
@@ -229,7 +230,7 @@ function PropertyEditorDialog({ editor, onClose, onSave }: {
         {editor?.kind === 'local-edit' ? '修改属性' : editor?.kind === 'shared-edit' ? '修改共享属性' : shared ? '新建共享属性' : '添加属性'}
       </h3>
       {editor?.kind === 'local-edit' && editor.initial.sharedKey &&
-        <p className="mt-2 text-sm text-muted-foreground">修改此属性会解除共享引用；如需更新共享定义，请在下方共享属性库编辑后同步。</p>}
+        <p className="mt-2 text-sm text-muted-foreground">修改此属性会解除共享引用；如需更新共享定义，请在“共享属性”模块编辑后同步。</p>}
       {shared && <p className="mt-2 text-sm text-muted-foreground">共享定义更新后，已引用的类型需手动同步并发布新版本。</p>}
       {error && <div className="mt-3"><Alert variant="error">{error}</Alert></div>}
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -284,7 +285,7 @@ function SharedPickerDialog({ open, items, usedNames, onClose, onAttach }: {
     <div className="flex items-center justify-between gap-3"><h3 id="shared-picker-title" className="text-lg font-semibold">引用共享属性</h3>
       <Button variant="outline" size="sm" onClick={onClose}>关闭</Button></div>
     <div className="mt-4 max-h-[65vh] space-y-2 overflow-y-auto">
-      {!items.length && <p className="text-sm text-muted-foreground">共享属性库为空，请先在下方创建。</p>}
+      {!items.length && <p className="text-sm text-muted-foreground">共享属性库为空，请先在“共享属性”模块创建。</p>}
       {items.map((item) => <div key={item.propertyKey} className="flex items-center justify-between gap-3 rounded-md border border-border p-3">
         <div><div className="font-medium">{item.definition.label} <span className="font-mono text-sm text-muted-foreground">{item.propertyKey}</span></div>
           <div className="text-xs text-muted-foreground">{item.definition.type} · v{item.version} · {item.usedBy.length} 个类型引用</div></div>
@@ -426,6 +427,266 @@ function ObjectTypeList({ canEdit, canDelete }: { canEdit: boolean; canDelete: b
   </div>;
 }
 
+type SecondaryTab = Exclude<Tab, 'types' | 'shared'>;
+type ModuleRecord = Record<string, unknown>;
+const MODULE_CONFIG: Record<SecondaryTab, { title: string; endpoint: string; key: string }> = {
+  links: { title: '关系 Link', endpoint: '/ontology/links', key: 'linkKey' },
+  actions: { title: 'Action', endpoint: '/action-types', key: 'actionKey' },
+  rules: { title: '规则', endpoint: '/rules', key: 'ruleKey' },
+  functions: { title: '函数', endpoint: '/functions', key: 'functionKey' },
+  interfaces: { title: 'Interface', endpoint: '/ontology/interfaces', key: 'interfaceKey' },
+  automations: { title: '自动化', endpoint: '/automations', key: 'id' },
+};
+
+function moduleName(tab: SecondaryTab, item: ModuleRecord): string {
+  return String(item[tab === 'links' || tab === 'interfaces' ? 'displayName' : 'name'] ?? '');
+}
+
+function moduleSummary(tab: SecondaryTab, item: ModuleRecord): string {
+  if (tab === 'links') return `${item.fromType} → ${item.toType} · ${item.cardinality}`;
+  if (tab === 'interfaces') return `${(item.properties as unknown[] | undefined)?.length ?? 0} 个契约属性`;
+  if (tab === 'automations') return String((item.condition as { typeKey?: string } | undefined)?.typeKey ?? '');
+  return `${tab === 'rules' ? `${item.kind} · ` : ''}v${item.version ?? 1}`;
+}
+
+function ModuleQuickDialog({ tab, item, onClose, onSave }: {
+  tab: SecondaryTab; item: ModuleRecord | null; onClose: () => void;
+  onSave: (name: string, description: string) => Promise<void>;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    if (item) {
+      setName(moduleName(tab, item)); setDescription(String(item.description ?? '')); setError(null);
+      if (!dialog.current?.open) dialog.current?.showModal();
+    } else if (dialog.current?.open) dialog.current.close();
+  }, [item, tab]);
+  async function save() {
+    if (!name.trim()) { setError('请填写名称'); return; }
+    setSaving(true); setError(null);
+    try { await onSave(name.trim(), description.trim()); onClose(); }
+    catch (failure) { setError(message(failure)); }
+    finally { setSaving(false); }
+  }
+  return <dialog ref={dialog} onCancel={(event) => { event.preventDefault(); onClose(); }}
+    aria-labelledby="module-quick-title"
+    className="w-[min(92vw,560px)] rounded-xl border border-border bg-card p-5 text-card-foreground shadow-xl backdrop:bg-black/50">
+    <h3 id="module-quick-title" className="text-lg font-semibold">编辑{MODULE_CONFIG[tab].title}基本信息</h3>
+    {['actions', 'rules', 'functions'].includes(tab) &&
+      <p className="mt-2 text-sm text-muted-foreground">保存基本信息会生成新的定义版本。</p>}
+    {error && <div className="mt-3"><Alert variant="error">{error}</Alert></div>}
+    <div className="mt-5 space-y-4"><Field label="名称" value={name} onChange={setName} required />
+      {tab !== 'automations' && <Field label="说明" value={description} onChange={setDescription} />}</div>
+    <div className="mt-6 flex justify-end gap-2"><Button variant="outline" disabled={saving} onClick={onClose}>取消</Button>
+      <Button disabled={saving} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</Button></div>
+  </dialog>;
+}
+
+function ModelModuleList({ tab, canEdit, canDelete }: {
+  tab: SecondaryTab; canEdit: boolean; canDelete: boolean;
+}) {
+  const navigate = useNavigate();
+  const config = MODULE_CONFIG[tab];
+  const editable = tab === 'automations' ? canDelete : canEdit;
+  const [items, setItems] = useState<ModuleRecord[]>([]);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [editing, setEditing] = useState<ModuleRecord | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [busyKey, setBusyKey] = useState('');
+  const load = useCallback(async () => {
+    setItems((await api.get<{ items: ModuleRecord[] }>(config.endpoint)).items);
+  }, [config.endpoint]);
+  useEffect(() => { void load().catch((failure) => setError(message(failure))); }, [load]);
+  const filtered = items.filter((item) => `${moduleName(tab, item)} ${item[config.key]} ${moduleSummary(tab, item)}`
+    .toLowerCase().includes(search.trim().toLowerCase()));
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pages);
+  const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  async function saveQuick(name: string, description: string) {
+    if (!editing) return;
+    const key = encodeURIComponent(String(editing[config.key]));
+    if (tab === 'links' || tab === 'interfaces') {
+      await api.patch(`${config.endpoint}/${key}`, { displayName: name, description });
+    } else if (tab === 'automations') {
+      const condition = editing.condition as { typeKey: string; expression: string };
+      await api.post(config.endpoint, { id: editing.id, name, typeKey: condition.typeKey,
+        expression: condition.expression, effect: editing.effect, enabled: editing.enabled });
+    } else {
+      await api.post(config.endpoint, { ...editing, name, description });
+    }
+    await load(); setInfo('基本信息已保存');
+  }
+  async function act(item: ModuleRecord, action: 'delete' | 'toggle') {
+    const key = String(item[config.key]);
+    if (action === 'delete' && !window.confirm(`删除 ${config.title} ${key}？服务器会检查关联数据。`)) return;
+    setBusyKey(key); setError(null); setInfo(null);
+    try {
+      if (action === 'delete') await api.delete(`${config.endpoint}/${encodeURIComponent(key)}`);
+      else {
+        const condition = item.condition as { typeKey: string; expression: string };
+        await api.post(config.endpoint, { id: item.id, name: item.name, typeKey: condition.typeKey,
+          expression: condition.expression, effect: item.effect, enabled: !item.enabled });
+      }
+      await load(); setInfo(action === 'delete' ? '操作已完成；有关联记录的定义可能已归档' : '启用状态已更新');
+    } catch (failure) { setError(message(failure)); }
+    finally { setBusyKey(''); }
+  }
+  return <div className="space-y-4">
+    <div className="flex flex-wrap items-center justify-between gap-3"><div>
+      <h2 className="text-lg font-semibold">{config.title}列表</h2>
+      <p className="text-sm text-muted-foreground">在列表中管理基本信息，进入详情编辑完整定义。</p></div>
+      {editable && <Button onClick={() => navigate(`/ontology/${tab}/new`)}>新建{config.title}</Button>}
+    </div>
+    <Notice error={error} info={info} />
+    <Card><CardContent className="space-y-4 pt-5">
+      <div className="flex flex-wrap items-end justify-between gap-3"><div className="w-full max-w-sm">
+        <Field label={`搜索${config.title}`} value={search} onChange={(value) => { setSearch(value); setPage(1); }} placeholder="名称或标识" />
+      </div><div className="space-y-1"><Label htmlFor={`${tab}-page-size`}>每页</Label>
+        <Select id={`${tab}-page-size`} value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
+          {[10, 20, 50].map((size) => <option key={size} value={size}>{size} 条</option>)}
+        </Select></div></div>
+      <div className="rounded-md border border-border"><Table><THeader><TR>
+        <TH>{config.title}</TH><TH>概要</TH><TH>状态</TH><TH>操作</TH>
+      </TR></THeader><TBody>{visible.length ? visible.map((item) => {
+        const key = String(item[config.key]);
+        const status = tab === 'automations' ? (item.enabled ? '启用' : '停用') : String(item.state ?? '—');
+        return <TR key={key}><TD><Link className="font-medium text-primary hover:underline"
+          to={`/ontology/${tab}/${encodeURIComponent(key)}`}>{moduleName(tab, item)}</Link>
+          <div className="font-mono text-xs text-muted-foreground">{key}</div></TD>
+          <TD className="text-sm text-muted-foreground">{moduleSummary(tab, item)}</TD>
+          <TD><Badge variant={status === 'published' || status === '启用' ? 'success' : 'secondary'}>{status}</Badge></TD>
+          <TD><div className="flex flex-wrap gap-1">
+            <Button size="sm" variant="outline" onClick={() => navigate(`/ontology/${tab}/${encodeURIComponent(key)}`)}>详情</Button>
+            {editable && <Button size="sm" variant="ghost" onClick={() => setEditing(item)}>编辑</Button>}
+            {tab === 'automations' && canDelete && <Button size="sm" variant="secondary" disabled={!!busyKey}
+              onClick={() => void act(item, 'toggle')}>{item.enabled ? '停用' : '启用'}</Button>}
+            {tab !== 'automations' && canDelete && <Button size="sm" variant="destructive" disabled={!!busyKey}
+              onClick={() => void act(item, 'delete')}>删除</Button>}
+          </div></TD></TR>;
+      }) : <TR><TD colSpan={4} className="py-8 text-center text-muted-foreground">没有匹配的定义</TD></TR>}</TBody></Table></div>
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+        <span>共 {filtered.length} 条 · 第 {currentPage} / {pages} 页</span>
+        <div className="flex gap-2"><Button size="sm" variant="outline" disabled={currentPage <= 1}
+          onClick={() => setPage(currentPage - 1)}>上一页</Button>
+          <Button size="sm" variant="outline" disabled={currentPage >= pages}
+            onClick={() => setPage(currentPage + 1)}>下一页</Button></div>
+      </div>
+    </CardContent></Card>
+    <ModuleQuickDialog tab={tab} item={editing} onClose={() => setEditing(null)} onSave={saveQuick} />
+  </div>;
+}
+
+function SharedPropertyList({ canEdit }: { canEdit: boolean }) {
+  const [items, setItems] = useState<SharedProperty[]>([]);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [editor, setEditor] = useState<PropertyEditState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    setItems((await api.get<{ items: SharedProperty[] }>('/ontology/shared-properties')).items);
+  }, []);
+  useEffect(() => { void load().catch((failure) => setError(message(failure))); }, [load]);
+  const filtered = items.filter((item) => `${item.definition.label} ${item.propertyKey} ${item.definition.type}`
+    .toLowerCase().includes(search.trim().toLowerCase()));
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pages);
+  const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  async function save(property: Property) {
+    if (editor?.kind === 'shared-edit' && editor.shared) {
+      await api.put(`/ontology/shared-properties/${encodeURIComponent(editor.shared.propertyKey)}`, {
+        definition: property, expectedVersion: editor.shared.version,
+      });
+      setInfo('共享定义已更新；引用类型需分别同步并发布');
+    } else {
+      await api.post('/ontology/shared-properties', { propertyKey: property.name, definition: property });
+      setInfo('共享属性已创建');
+    }
+    await load();
+  }
+  return <div className="space-y-4">
+    <div className="flex flex-wrap items-center justify-between gap-3"><div>
+      <h2 className="text-lg font-semibold">共享属性列表</h2>
+      <p className="text-sm text-muted-foreground">统一属性定义可被多个对象类型引用；更新后由各类型手动同步。</p></div>
+      {canEdit && <Button onClick={() => setEditor({ kind: 'shared-new', initial: blankProperty() })}>新建共享属性</Button>}
+    </div>
+    <Notice error={error} info={info} />
+    <Card><CardContent className="space-y-4 pt-5">
+      <div className="flex flex-wrap items-end justify-between gap-3"><div className="w-full max-w-sm">
+        <Field label="搜索共享属性" value={search} onChange={(value) => { setSearch(value); setPage(1); }} placeholder="名称、标识或类型" />
+      </div><div className="space-y-1"><Label htmlFor="shared-page-size">每页</Label>
+        <Select id="shared-page-size" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
+          {[10, 20, 50].map((size) => <option key={size} value={size}>{size} 条</option>)}
+        </Select></div></div>
+      <div className="rounded-md border border-border"><Table><THeader><TR>
+        <TH>共享属性</TH><TH>类型</TH><TH>版本</TH><TH>引用类型数</TH><TH>操作</TH>
+      </TR></THeader><TBody>{visible.length ? visible.map((item) => <TR key={item.propertyKey}>
+        <TD><Link className="font-medium text-primary hover:underline" to={`/ontology/shared/${encodeURIComponent(item.propertyKey)}`}>
+          {item.definition.label}</Link><div className="font-mono text-xs text-muted-foreground">{item.propertyKey}</div></TD>
+        <TD>{item.definition.type}</TD><TD>v{item.version}</TD><TD>{item.usedBy.length}</TD>
+        <TD><div className="flex flex-wrap gap-1"><Link to={`/ontology/shared/${encodeURIComponent(item.propertyKey)}`}
+          className="inline-flex h-8 items-center rounded-md border border-border px-3 text-xs hover:bg-accent">详情</Link>
+          {canEdit && <Button size="sm" variant="ghost" onClick={() => setEditor({ kind: 'shared-edit', initial: item.definition, shared: item })}>编辑</Button>}
+        </div></TD></TR>) : <TR><TD colSpan={5} className="py-8 text-center text-muted-foreground">暂无匹配的共享属性</TD></TR>}</TBody></Table></div>
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+        <span>共 {filtered.length} 条 · 第 {currentPage} / {pages} 页</span>
+        <div className="flex gap-2"><Button size="sm" variant="outline" disabled={currentPage <= 1}
+          onClick={() => setPage(currentPage - 1)}>上一页</Button>
+          <Button size="sm" variant="outline" disabled={currentPage >= pages}
+            onClick={() => setPage(currentPage + 1)}>下一页</Button></div>
+      </div>
+    </CardContent></Card>
+    <PropertyEditorDialog editor={editor} onClose={() => setEditor(null)} onSave={save} />
+  </div>;
+}
+
+function SharedPropertyDetail({ propertyKey, canEdit }: { propertyKey: string; canEdit: boolean }) {
+  const [item, setItem] = useState<SharedProperty | null>(null);
+  const [editor, setEditor] = useState<PropertyEditState | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    const result = await api.get<{ items: SharedProperty[] }>('/ontology/shared-properties');
+    const found = result.items.find((entry) => entry.propertyKey === propertyKey);
+    if (!found) throw new Error(`共享属性不存在: ${propertyKey}`);
+    setItem(found);
+  }, [propertyKey]);
+  useEffect(() => { void load().catch((failure) => setError(message(failure))); }, [load]);
+  async function save(property: Property) {
+    if (!item) return;
+    await api.put(`/ontology/shared-properties/${encodeURIComponent(item.propertyKey)}`, {
+      definition: property, expectedVersion: item.version,
+    });
+    await load(); setInfo('共享定义已更新；引用类型需分别同步并发布');
+  }
+  return <div className="space-y-4"><Notice error={error} info={info} />
+    {item && <><Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-3">
+      <div><CardTitle>{item.definition.label}</CardTitle><p className="font-mono text-sm text-muted-foreground">{item.propertyKey} · v{item.version}</p></div>
+      {canEdit && <Button onClick={() => setEditor({ kind: 'shared-edit', initial: item.definition, shared: item })}>编辑共享属性</Button>}
+    </div></CardHeader><CardContent className="space-y-3 text-sm">
+      <div className="grid gap-3 sm:grid-cols-2"><div>类型：{item.definition.type}</div>
+        <div>必填：{item.definition.required ? '是' : '否'}</div>
+        <div>列表显示：{item.definition.showInList ? '是' : '否'}</div>
+        <div>单位：{item.definition.unit || '—'}</div>
+        <div>敏感标签：{item.definition.sensitive || '—'}</div>
+        <div>引用对象类型：{item.definition.refType || '—'}</div></div>
+      <p>说明：{item.definition.description || '—'}</p>
+    </CardContent></Card><Card><CardHeader><CardTitle>引用此属性的对象类型</CardTitle></CardHeader>
+      <CardContent>{item.usedBy.length ? <div className="flex flex-wrap gap-2">
+        {item.usedBy.map((typeKey) => <Link key={typeKey} className="rounded-md border border-border px-3 py-2 text-sm text-primary hover:bg-accent"
+          to={`/ontology/types/${encodeURIComponent(typeKey)}`}>{typeKey}</Link>)}
+      </div> : <p className="text-sm text-muted-foreground">暂无已保存的类型引用</p>}</CardContent></Card></>}
+    <PropertyEditorDialog editor={editor} onClose={() => setEditor(null)} onSave={save} />
+  </div>;
+}
+
 export function ObjectTypeDetailPage() {
   const { typeKey } = useParams();
   const { hasRole } = useAuth();
@@ -433,6 +694,27 @@ export function ObjectTypeDetailPage() {
     <div><Link to="/ontology/types" className="text-sm text-primary hover:underline">← 返回对象类型列表</Link>
       <h1 className="mt-2 text-2xl font-bold">对象类型及属性</h1></div>
     {typeKey && <TypeManager typeKey={typeKey} canEdit={hasRole('admin', 'analyst')} canDelete={hasRole('admin')} />}
+  </div>;
+}
+
+export function ModelModuleDetailPage() {
+  const { module, itemKey } = useParams();
+  const { hasRole } = useAuth();
+  const canEdit = hasRole('admin', 'analyst');
+  const canDelete = hasRole('admin');
+  const tab = TABS.find((entry) => entry.key === module);
+  if (!tab || !itemKey || tab.key === 'types') return <Alert variant="error">模型模块或定义不存在</Alert>;
+  return <div className="space-y-5">
+    <div><Link to={`/ontology/${tab.key}`} className="text-sm text-primary hover:underline">← 返回{tab.label}列表</Link>
+      <h1 className="mt-2 text-2xl font-bold">{tab.label}{itemKey === 'new' ? ' · 新建' : ' · 详情'}</h1></div>
+    {tab.key === 'shared' ? <SharedPropertyDetail propertyKey={itemKey} canEdit={canEdit} /> : <>
+      {tab.key === 'links' && <LinkManager key={itemKey} initialKey={itemKey} canEdit={canEdit} canDelete={canDelete} />}
+      {tab.key === 'actions' && <ActionManager key={itemKey} initialKey={itemKey} canEdit={canEdit} canDelete={canDelete} />}
+      {tab.key === 'rules' && <RuleManager key={itemKey} initialKey={itemKey} canEdit={canEdit} canDelete={canDelete} />}
+      {tab.key === 'functions' && <FunctionManager key={itemKey} initialKey={itemKey} canEdit={canEdit} canDelete={canDelete} />}
+      {tab.key === 'interfaces' && <InterfaceManager key={itemKey} initialKey={itemKey} canEdit={canEdit} canDelete={canDelete} />}
+      {tab.key === 'automations' && <AutomationManager key={itemKey} initialKey={itemKey} canEdit={canDelete} />}
+    </>}
   </div>;
 }
 
@@ -628,17 +910,6 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
               }))}>发布回滚版本</Button>
           </div>}
         </CardContent></Card> : !error && <Card><CardContent className="pt-5 text-sm text-muted-foreground">正在加载对象类型…</CardContent></Card>}
-      <Card><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><div><CardTitle>共享属性库</CardTitle>
-        <p className="mt-1 text-xs text-muted-foreground">统一定义可在多个对象类型中引用；修改后需在各类型手动同步。</p></div>
-        {canEdit && <Button size="sm" variant="outline" onClick={() => setPropertyEditor({ kind: 'shared-new', initial: blankProperty() })}>新建共享属性</Button>}
-      </div></CardHeader><CardContent className="space-y-2">
-        {!sharedProperties.length && <p className="text-sm text-muted-foreground">暂无共享属性</p>}
-        {sharedProperties.map((item) => <div key={item.propertyKey} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3 text-sm">
-          <div><span className="font-medium">{item.definition.label}</span> <span className="font-mono text-muted-foreground">{item.propertyKey}</span>
-            <p className="text-xs text-muted-foreground">{item.definition.type} · v{item.version} · {item.usedBy.length} 个类型引用</p></div>
-          {canEdit && <Button size="sm" variant="ghost" onClick={() => setPropertyEditor({ kind: 'shared-edit', initial: item.definition, shared: item })}>修改共享定义</Button>}
-        </div>)}
-      </CardContent></Card>
       <PropertyEditorDialog editor={propertyEditor} onClose={() => setPropertyEditor(null)} onSave={saveProperty} />
       <SharedPickerDialog open={sharedPickerOpen} items={sharedProperties} usedNames={properties.map((item) => item.name)}
         onClose={() => setSharedPickerOpen(false)} onAttach={attachShared} />
@@ -651,8 +922,8 @@ type LinkDef = { linkKey: string; displayName: string; fromType: string; toType:
 type LinkInstance = { linkId: string; linkKey: string; fromObjectId: string; toObjectId: string; isValid: boolean };
 type ObjectOption = { objectId: string; title: string; typeKey: string };
 
-function LinkManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: boolean }) {
-  const [defs, setDefs] = useState<LinkDef[]>([]);
+function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boolean; canDelete: boolean }) {
+  const navigate = useNavigate();
   const [types, setTypes] = useState<ObjectType[]>([]);
   const [instances, setInstances] = useState<LinkInstance[]>([]);
   const [objects, setObjects] = useState<ObjectOption[]>([]);
@@ -665,11 +936,13 @@ function LinkManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bool
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
     const [a, b, c, d] = await Promise.all([
-      api.get<{ items: LinkDef[] }>('/ontology/links'), api.get<{ items: ObjectType[] }>('/ontology/types'),
+      initialKey === 'new' ? Promise.resolve(null) : api.get<LinkDef>(`/ontology/links/${encodeURIComponent(initialKey)}`),
+      api.get<{ items: ObjectType[] }>('/ontology/types'),
       api.get<{ items: LinkInstance[] }>('/links?limit=100'), api.get<{ items: ObjectOption[] }>('/objects?limit=200'),
     ]);
-    setDefs(a.items); setTypes(b.items); setInstances(c.items); setObjects(d.items);
-  }, []);
+    if (a) { setSelected(a.linkKey); setForm(a); }
+    setTypes(b.items); setInstances(c.items); setObjects(d.items);
+  }, [initialKey]);
   useEffect(() => { load().catch((e) => setError(message(e))); }, [load]);
   async function run(label: string, task: () => Promise<unknown>) {
     setBusy(true); setError(null); setInfo(null);
@@ -678,17 +951,10 @@ function LinkManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bool
     finally { setBusy(false); }
   }
   const set = (patch: Partial<LinkDef>) => setForm({ ...form, ...patch });
-  const visibleInstances = selected ? instances.filter((x) => x.linkKey === selected) : instances;
+  const visibleInstances = selected ? instances.filter((x) => x.linkKey === selected) : [];
   const fromOptions = objects.filter((o) => !form.fromType || o.typeKey === form.fromType);
   const toOptions = objects.filter((o) => !form.toType || o.typeKey === form.toType);
   return <div className="space-y-4"><Notice error={error} info={info} />
-    <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
-      <Card><CardHeader><CardTitle>关系定义</CardTitle></CardHeader><CardContent className="space-y-2">
-        {canEdit && <Button className="w-full" onClick={() => { setSelected(''); setForm({ linkKey: '', displayName: '', fromType: '', toType: '', cardinality: '1:N', inverseName: '', description: '', required: false, state: 'published' }); }}>新建 Link</Button>}
-        {defs.map((d) => <button key={d.linkKey} className={`w-full rounded-md border p-3 text-left text-sm hover:bg-accent ${selected === d.linkKey ? 'border-primary' : 'border-border'}`} onClick={() => { setSelected(d.linkKey); setForm(d); }}>
-          <span className="font-medium">{d.displayName}</span><span className="block font-mono text-xs text-muted-foreground">{d.fromType} → {d.toType}</span>
-        </button>)}
-      </CardContent></Card>
       <Card><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建 Link 定义'}</CardTitle></CardHeader><CardContent className="space-y-4">
         <div className="grid gap-3 md:grid-cols-2">
           <Field label="Link 标识" value={form.linkKey} onChange={(v) => set({ linkKey: v })} disabled={!!selected || !canEdit} />
@@ -713,16 +979,10 @@ function LinkManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bool
           {canEdit && <Button disabled={busy} onClick={() => run(selected ? '更新关系定义' : '创建关系定义', async () => {
             if (!form.linkKey || !form.displayName || !form.fromType || !form.toType) throw new Error('标识、名称与两端类型均必填');
             if (selected) await api.patch(`/ontology/links/${encodeURIComponent(selected)}`, form);
-            else { await api.post('/ontology/links', form); setSelected(form.linkKey); }
+            else { await api.post('/ontology/links', form); navigate(`/ontology/links/${encodeURIComponent(form.linkKey)}`); }
           })}>{selected ? '保存定义' : '创建定义'}</Button>}
-          {selected && canDelete && <Button variant="destructive" disabled={busy} onClick={() => {
-            if (window.confirm(`删除关系定义 ${selected}？已有连接时服务器会拒绝。`)) void run('删除关系定义', async () => {
-              await api.delete(`/ontology/links/${encodeURIComponent(selected)}`); setSelected('');
-            });
-          }}>删除定义</Button>}
         </div>
       </CardContent></Card>
-    </div>
     <Card><CardHeader><CardTitle>对象连接实例</CardTitle></CardHeader><CardContent className="space-y-4">
       {canEdit && <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
         <div className="space-y-1"><Label htmlFor="link-from-object">起点对象</Label><Select id="link-from-object" value={fromId} onChange={(e) => setFromId(e.target.value)}><option value="">选择对象</option>
@@ -750,8 +1010,8 @@ type ActionDef = { actionKey: string; name: string; description: string; paramsS
 const blankAction = (): ActionDef => ({ actionKey: '', name: '', description: '', paramsSchema: { type: 'object', properties: {}, required: [] },
   preconditions: [], writeSet: [], approvalPolicy: {}, requiredRoles: ['operator'], externalEffects: [], compensation: {} });
 
-function ActionManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: boolean }) {
-  const [items, setItems] = useState<ActionDef[]>([]);
+function ActionManager({ initialKey, canEdit }: { initialKey: string; canEdit: boolean; canDelete: boolean }) {
+  const navigate = useNavigate();
   const [selected, setSelected] = useState('');
   const [form, setForm] = useState<ActionDef>(blankAction());
   const [paramsText, setParamsText] = useState(json(blankAction().paramsSchema));
@@ -764,7 +1024,9 @@ function ActionManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bo
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { setItems((await api.get<{ items: ActionDef[] }>('/action-types')).items); }, []);
+  const load = useCallback(async () => {
+    if (initialKey !== 'new') choose(await api.get<ActionDef>(`/action-types/${encodeURIComponent(initialKey)}`));
+  }, [initialKey]);
   useEffect(() => { load().catch((e) => setError(message(e))); }, [load]);
   function choose(a: ActionDef) {
     setSelected(a.actionKey); setForm(a); setParamsText(json(a.paramsSchema)); setWritesText(json(a.writeSet));
@@ -786,14 +1048,7 @@ function ActionManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bo
     if (!Array.isArray(writeSet) || !Array.isArray(externalEffects)) throw new Error('写入集合与外部效果必须是数组');
     return { ...form, paramsSchema, writeSet, approvalPolicy, externalEffects, compensation };
   }
-  return <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
-    <Card><CardHeader><CardTitle>Action 类型</CardTitle></CardHeader><CardContent className="space-y-2">
-      {canEdit && <Button className="w-full" onClick={() => { setSelected(''); choose(blankAction()); }}>新建 Action</Button>}
-      {items.map((a) => <button key={a.actionKey} onClick={() => choose(a)} className={`w-full rounded-md border p-3 text-left text-sm hover:bg-accent ${selected === a.actionKey ? 'border-primary' : 'border-border'}`}>
-        <span className="font-medium">{a.name}</span><span className="block font-mono text-xs text-muted-foreground">{a.actionKey} · v{a.version}</span>
-      </button>)}
-    </CardContent></Card>
-    <div className="space-y-4"><Notice error={error} info={info} /><Card><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建 Action'}</CardTitle></CardHeader>
+  return <div className="space-y-4"><Notice error={error} info={info} /><Card><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建 Action'}</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-3 md:grid-cols-2">
           <Field label="Action 标识" value={form.actionKey} onChange={(v) => setForm({ ...form, actionKey: v })} disabled={!!selected || !canEdit} />
@@ -813,12 +1068,8 @@ function ActionManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bo
         <div className="flex flex-wrap gap-2">
           {canEdit && <Button disabled={busy} onClick={() => run(selected ? '更新 Action' : '创建 Action', async () => {
             const result = await api.post<ActionDef>('/action-types', payload()); choose(result);
+            if (initialKey === 'new') navigate(`/ontology/actions/${encodeURIComponent(result.actionKey)}`);
           })}>{selected ? '保存新版本' : '创建 Action'}</Button>}
-          {selected && canDelete && <Button variant="destructive" disabled={busy} onClick={() => {
-            if (window.confirm(`删除 Action ${selected}？有关联执行记录时服务器会拒绝。`)) void run('删除 Action', async () => {
-              await api.delete(`/action-types/${encodeURIComponent(selected)}`); setSelected(''); setForm(blankAction());
-            });
-          }}>删除 Action</Button>}
         </div>
         {selected && <div className="space-y-2 border-t border-border pt-4">
           <Label htmlFor="action-preview">验证参数（JSON）</Label><Textarea id="action-preview" rows={3} className="font-mono text-xs" value={previewParams} onChange={(e) => setPreviewParams(e.target.value)} />
@@ -827,7 +1078,7 @@ function ActionManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bo
           })}>验证 Action</Button>
           {preview && <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">{preview}</pre>}
         </div>}
-      </CardContent></Card></div>
+      </CardContent></Card>
   </div>;
 }
 
@@ -836,8 +1087,8 @@ type RuleDef = { ruleKey: string; name: string; kind: string; description: strin
   version?: number };
 const blankRule = (): RuleDef => ({ ruleKey: '', name: '', kind: 'derived_metric', description: '', expression: '', outputType: 'number', scopeType: '', testCases: [] });
 
-function RuleManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: boolean }) {
-  const [items, setItems] = useState<RuleDef[]>([]);
+function RuleManager({ initialKey, canEdit }: { initialKey: string; canEdit: boolean; canDelete: boolean }) {
+  const navigate = useNavigate();
   const [selected, setSelected] = useState('');
   const [form, setForm] = useState<RuleDef>(blankRule());
   const [testsText, setTestsText] = useState('[]');
@@ -846,7 +1097,9 @@ function RuleManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bool
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { setItems((await api.get<{ items: RuleDef[] }>('/rules')).items); }, []);
+  const load = useCallback(async () => {
+    if (initialKey !== 'new') choose(await api.get<RuleDef>(`/rules/${encodeURIComponent(initialKey)}`));
+  }, [initialKey]);
   useEffect(() => { load().catch((e) => setError(message(e))); }, [load]);
   function choose(r: RuleDef) { setSelected(r.ruleKey); setForm(r); setTestsText(json(r.testCases)); setPreview(null); }
   async function run(label: string, task: () => Promise<unknown>) {
@@ -855,14 +1108,7 @@ function RuleManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bool
     catch (e) { setError(message(e)); }
     finally { setBusy(false); }
   }
-  return <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
-    <Card><CardHeader><CardTitle>规则定义</CardTitle></CardHeader><CardContent className="space-y-2">
-      {canEdit && <Button className="w-full" onClick={() => { setSelected(''); choose(blankRule()); }}>新建规则</Button>}
-      {items.map((r) => <button key={r.ruleKey} onClick={() => choose(r)} className={`w-full rounded-md border p-3 text-left text-sm hover:bg-accent ${selected === r.ruleKey ? 'border-primary' : 'border-border'}`}>
-        <span className="font-medium">{r.name}</span><span className="block text-xs text-muted-foreground">{r.kind} · {r.ruleKey}</span>
-      </button>)}
-    </CardContent></Card>
-    <div className="space-y-4"><Notice error={error} info={info} /><Card><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建规则'}</CardTitle></CardHeader><CardContent className="space-y-4">
+  return <div className="space-y-4"><Notice error={error} info={info} /><Card><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建规则'}</CardTitle></CardHeader><CardContent className="space-y-4">
       <div className="grid gap-3 md:grid-cols-2">
         <Field label="规则标识" value={form.ruleKey} onChange={(v) => setForm({ ...form, ruleKey: v })} disabled={!!selected || !canEdit} />
         <Field label="名称" value={form.name} onChange={(v) => setForm({ ...form, name: v })} disabled={!canEdit} />
@@ -882,10 +1128,8 @@ function RuleManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bool
           const testCases = parseJson<RuleDef['testCases']>(testsText, '测试样例');
           if (!Array.isArray(testCases)) throw new Error('测试样例必须是数组');
           const result = await api.post<RuleDef>('/rules', { ...form, testCases }); choose(result);
+          if (initialKey === 'new') navigate(`/ontology/rules/${encodeURIComponent(result.ruleKey)}`);
         })}>{selected ? '保存新版本' : '创建规则'}</Button>}
-        {selected && canDelete && <Button variant="destructive" disabled={busy} onClick={() => {
-          if (window.confirm(`删除规则 ${selected}？`)) void run('删除规则', async () => { await api.delete(`/rules/${encodeURIComponent(selected)}`); setSelected(''); setForm(blankRule()); });
-        }}>删除规则</Button>}
       </div>
       <div className="space-y-2 border-t border-border pt-4"><JsonField label="试算上下文" value={contextText} onChange={setContextText} rows={3} />
         <Button size="sm" variant="outline" disabled={busy || !form.expression} onClick={() => run('试算', async () => {
@@ -893,7 +1137,7 @@ function RuleManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: bool
         })}>试算表达式</Button>
         {preview && <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">{preview}</pre>}
       </div>
-    </CardContent></Card></div>
+    </CardContent></Card>
   </div>;
 }
 
@@ -901,8 +1145,8 @@ type FunctionDef = { functionKey: string; name: string; description: string; par
   expression: string; outputType: string; version?: number; state?: string };
 const blankFunction = (): FunctionDef => ({ functionKey: '', name: '', description: '', parameters: [], expression: '', outputType: 'number' });
 
-function FunctionManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: boolean }) {
-  const [items, setItems] = useState<FunctionDef[]>([]);
+function FunctionManager({ initialKey, canEdit }: { initialKey: string; canEdit: boolean; canDelete: boolean }) {
+  const navigate = useNavigate();
   const [selected, setSelected] = useState('');
   const [form, setForm] = useState<FunctionDef>(blankFunction());
   const [argsText, setArgsText] = useState('{}');
@@ -910,7 +1154,9 @@ function FunctionManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: 
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { setItems((await api.get<{ items: FunctionDef[] }>('/functions')).items); }, []);
+  const load = useCallback(async () => {
+    if (initialKey !== 'new') choose(await api.get<FunctionDef>(`/functions/${encodeURIComponent(initialKey)}`));
+  }, [initialKey]);
   useEffect(() => { load().catch((e) => setError(message(e))); }, [load]);
   function choose(f: FunctionDef) { setSelected(f.functionKey); setForm(f); setPreview(null); }
   async function run(label: string, task: () => Promise<unknown>) {
@@ -919,14 +1165,7 @@ function FunctionManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: 
     catch (e) { setError(message(e)); }
     finally { setBusy(false); }
   }
-  return <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
-    <Card><CardHeader><CardTitle>自定义函数</CardTitle></CardHeader><CardContent className="space-y-2">
-      {canEdit && <Button className="w-full" onClick={() => { setSelected(''); setForm(blankFunction()); setPreview(null); }}>新建函数</Button>}
-      {items.map((f) => <button key={f.functionKey} onClick={() => choose(f)} className={`w-full rounded-md border p-3 text-left text-sm hover:bg-accent ${selected === f.functionKey ? 'border-primary' : 'border-border'}`}>
-        <span className="font-medium">{f.name}</span><span className="block font-mono text-xs text-muted-foreground">{f.functionKey} · v{f.version}</span>
-      </button>)}
-    </CardContent></Card>
-    <div className="space-y-4"><Notice error={error} info={info} /><Card><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建函数'}</CardTitle></CardHeader><CardContent className="space-y-4">
+  return <div className="space-y-4"><Notice error={error} info={info} /><Card><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建函数'}</CardTitle></CardHeader><CardContent className="space-y-4">
       <div className="grid gap-3 md:grid-cols-2">
         <Field label="函数标识" value={form.functionKey} onChange={(v) => setForm({ ...form, functionKey: v })} disabled={!!selected || !canEdit} placeholder="例如 risk_score" />
         <Field label="名称" value={form.name} onChange={(v) => setForm({ ...form, name: v })} disabled={!canEdit} />
@@ -941,12 +1180,8 @@ function FunctionManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: 
         {canEdit && <Button disabled={busy} onClick={() => run(selected ? '更新函数' : '创建函数', async () => {
           if (!form.functionKey || !form.name || !form.expression) throw new Error('标识、名称和表达式必填');
           const result = await api.post<FunctionDef>('/functions', form); choose(result);
+          if (initialKey === 'new') navigate(`/ontology/functions/${encodeURIComponent(result.functionKey)}`);
         })}>{selected ? '保存新版本' : '创建函数'}</Button>}
-        {selected && canDelete && <Button variant="destructive" disabled={busy} onClick={() => {
-          if (window.confirm(`删除函数 ${selected}？使用它的规则将无法计算。`)) void run('删除函数', async () => {
-            await api.delete(`/functions/${encodeURIComponent(selected)}`); setSelected(''); setForm(blankFunction());
-          });
-        }}>删除函数</Button>}
       </div>
       {selected && <div className="space-y-2 border-t border-border pt-4">
         <JsonField label="试算参数（对象）" value={argsText} onChange={setArgsText} rows={3} />
@@ -955,18 +1190,23 @@ function FunctionManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: 
         })}>运行试算</Button>
         {preview && <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">{preview}</pre>}
       </div>}
-    </CardContent></Card></div>
+    </CardContent></Card>
   </div>;
 }
 
-function InterfaceManager({ canEdit, canDelete }: { canEdit: boolean; canDelete: boolean }) {
-  const [items, setItems] = useState<InterfaceDef[]>([]);
+function InterfaceManager({ initialKey, canEdit }: { initialKey: string; canEdit: boolean; canDelete: boolean }) {
+  const navigate = useNavigate();
   const [selected, setSelected] = useState('');
   const [form, setForm] = useState<InterfaceDef>({ interfaceKey: '', displayName: '', description: '', properties: [], capabilities: [] });
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => { setItems((await api.get<{ items: InterfaceDef[] }>('/ontology/interfaces')).items); }, []);
+  const load = useCallback(async () => {
+    if (initialKey !== 'new') {
+      const selected = await api.get<InterfaceDef>(`/ontology/interfaces/${encodeURIComponent(initialKey)}`);
+      setSelected(selected.interfaceKey); setForm(selected);
+    }
+  }, [initialKey]);
   useEffect(() => { load().catch((e) => setError(message(e))); }, [load]);
   async function run(label: string, task: () => Promise<unknown>) {
     setBusy(true); setError(null); setInfo(null);
@@ -977,14 +1217,7 @@ function InterfaceManager({ canEdit, canDelete }: { canEdit: boolean; canDelete:
   const set = (patch: Partial<InterfaceDef>) => setForm({ ...form, ...patch });
   const updateProp = (index: number, patch: Partial<InterfaceDef['properties'][number]>) =>
     set({ properties: form.properties.map((p, i) => i === index ? { ...p, ...patch } : p) });
-  return <div className="grid gap-5 lg:grid-cols-[280px_1fr]">
-    <Card><CardHeader><CardTitle>Interface 定义</CardTitle></CardHeader><CardContent className="space-y-2">
-      {canEdit && <Button className="w-full" onClick={() => { setSelected(''); setForm({ interfaceKey: '', displayName: '', description: '', properties: [], capabilities: [] }); }}>新建 Interface</Button>}
-      {items.map((f) => <button key={f.interfaceKey} onClick={() => { setSelected(f.interfaceKey); setForm(f); }} className={`w-full rounded-md border p-3 text-left text-sm hover:bg-accent ${selected === f.interfaceKey ? 'border-primary' : 'border-border'}`}>
-        <span className="font-medium">{f.displayName}</span><span className="block font-mono text-xs text-muted-foreground">{f.interfaceKey}</span>
-      </button>)}
-    </CardContent></Card>
-    <div className="space-y-4"><Notice error={error} info={info} /><Card><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建 Interface'}</CardTitle></CardHeader><CardContent className="space-y-4">
+  return <div className="space-y-4"><Notice error={error} info={info} /><Card><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建 Interface'}</CardTitle></CardHeader><CardContent className="space-y-4">
       <div className="grid gap-3 md:grid-cols-2">
         <Field label="Interface 标识" value={form.interfaceKey} onChange={(v) => set({ interfaceKey: v })} disabled={!!selected || !canEdit} />
         <Field label="显示名称" value={form.displayName} onChange={(v) => set({ displayName: v })} disabled={!canEdit} />
@@ -1008,14 +1241,9 @@ function InterfaceManager({ canEdit, canDelete }: { canEdit: boolean; canDelete:
           if (!form.interfaceKey || !form.displayName) throw new Error('标识和显示名称必填');
           if (form.properties.some((p) => !p.name)) throw new Error('属性名必填');
           if (selected) await api.patch(`/ontology/interfaces/${encodeURIComponent(selected)}`, form);
-          else { await api.post('/ontology/interfaces', form); setSelected(form.interfaceKey); }
+          else { await api.post('/ontology/interfaces', form); navigate(`/ontology/interfaces/${encodeURIComponent(form.interfaceKey)}`); }
         })}>{selected ? '保存 Interface' : '创建 Interface'}</Button>}
-        {selected && canDelete && <Button variant="destructive" disabled={busy} onClick={() => {
-          if (window.confirm(`删除 Interface ${selected}？被类型引用时服务器会拒绝。`)) void run('删除 Interface', async () => {
-            await api.delete(`/ontology/interfaces/${encodeURIComponent(selected)}`); setSelected('');
-          });
-        }}>删除 Interface</Button>}
       </div>
-    </CardContent></Card></div>
+    </CardContent></Card>
   </div>;
 }
