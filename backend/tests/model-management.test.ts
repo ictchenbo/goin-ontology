@@ -29,10 +29,18 @@ test('类型属性版本、Interface 契约和 1:N Link 可通过管理接口完
     const s2 = objects.createObject({ typeKey: 'Supplier', payload: { name: 'S2' }, actor: 'tester' });
     const o1 = objects.createObject({ typeKey: 'Order', payload: { name: 'O1' }, actor: 'tester' });
     const o2 = objects.createObject({ typeKey: 'Order', payload: { name: 'O2' }, actor: 'tester' });
-    objects.createLink({ linkKey: 'supplier_orders', fromObjectId: s1.objectId, toObjectId: o1.objectId, actor: 'tester' });
+    const firstLink = objects.createLink({ linkKey: 'supplier_orders', fromObjectId: s1.objectId, toObjectId: o1.objectId, actor: 'tester' });
     objects.createLink({ linkKey: 'supplier_orders', fromObjectId: s1.objectId, toObjectId: o2.objectId, actor: 'tester' });
     assert.throws(() => objects.createLink({ linkKey: 'supplier_orders', fromObjectId: s2.objectId,
       toObjectId: o1.objectId, actor: 'tester' }), /多条入边/);
+
+    const replaced = objects.replaceLink(firstLink.linkId, { linkKey: 'supplier_orders',
+      fromObjectId: s2.objectId, toObjectId: o1.objectId, actor: 'tester' });
+    assert.equal(objects.listLinks({ linkKey: 'supplier_orders' }).some((link) => link.linkId === firstLink.linkId), false);
+    assert.equal(objects.listLinks({ linkKey: 'supplier_orders' }).some((link) => link.linkId === replaced.linkId), true);
+    assert.throws(() => objects.replaceLink(replaced.linkId, { linkKey: 'supplier_orders',
+      fromObjectId: s1.objectId, toObjectId: o2.objectId, actor: 'tester' }), /相同连接已存在/);
+    assert.equal(objects.listLinks({ linkKey: 'supplier_orders' }).some((link) => link.linkId === replaced.linkId), true);
 
     model.createTypeVersion('Supplier', { properties: [
       definition.properties[0], { name: 'code', label: '编码', type: 'string', required: true },

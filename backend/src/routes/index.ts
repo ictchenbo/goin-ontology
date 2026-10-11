@@ -16,7 +16,7 @@ import {
 } from '../modules/ontology/ontology-service';
 import {
   createObject, getObject, updateObject, softDeleteObject, queryObjects,
-  getNeighborhood, createLink, invalidateLink, getHistory, listLinks,
+  getNeighborhood, createLink, replaceLink, invalidateLink, getHistory, listLinks,
 } from '../modules/objects/object-service';
 import {
   upsertRule, listRules, getRule, deleteRule,
@@ -379,6 +379,18 @@ apiRouter.post('/links', requireAuth, asyncHandler((req, res) => {
   requireObjectAccess(req.user!, req.body.fromObjectId);
   requireObjectAccess(req.user!, req.body.toObjectId);
   res.status(201).json(createLink({ ...req.body, actor: req.user!.username }));
+}));
+
+apiRouter.patch('/links/:linkId', requireAuth, asyncHandler((req, res) => {
+  requireRole(req.user!, ['admin', 'analyst']);
+  const old = getDb().prepare('SELECT from_object_id, to_object_id FROM link_instance WHERE id = ? AND is_valid = 1')
+    .get(req.params.linkId) as { from_object_id: string; to_object_id: string } | undefined;
+  if (!old) throw new AppError('NOT_FOUND', '有效关联不存在');
+  requireObjectAccess(req.user!, old.from_object_id);
+  requireObjectAccess(req.user!, old.to_object_id);
+  requireObjectAccess(req.user!, req.body.fromObjectId);
+  requireObjectAccess(req.user!, req.body.toObjectId);
+  res.json(replaceLink(req.params.linkId, { ...req.body, actor: req.user!.username }));
 }));
 
 apiRouter.delete('/links/:linkId', requireAuth, asyncHandler((req, res) => {

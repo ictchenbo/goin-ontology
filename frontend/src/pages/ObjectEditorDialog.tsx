@@ -16,7 +16,8 @@ export interface ObjectInstance {
   payload?: Record<string, unknown>;
   computedErrors?: Record<string, string>;
   properties?: Record<string, unknown>;
-  links?: Array<{ linkId: string; linkKey: string; otherObject?: { objectId: string; title: string }; direction?: string }>;
+  links?: Array<{ linkId: string; linkKey: string; linkDisplay?: string;
+    otherObject?: { objectId: string; title: string }; direction?: string; props?: Record<string, unknown> }>;
   evidence?: Array<{ id: string; sourceKey?: string; confidence?: number; observedAt?: string; stance?: string; status?: string }>;
   history?: Array<{ revision: number; changeReason?: string; createdAt?: string; changedBy?: string }>;
   [key: string]: unknown;
@@ -94,6 +95,7 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
   const [typeKey, setTypeKey] = useState('');
   const [type, setType] = useState<ObjectType | null>(null);
   const [values, setValues] = useState<Record<string, unknown>>({});
+  const [extraValues, setExtraValues] = useState<Record<string, string>>({});
   const [title, setTitle] = useState('');
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
@@ -103,7 +105,10 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
       const published = types.filter((candidate) => candidate.state === 'published');
       setTypeKey(item?.typeKey ?? published.find((candidate) => candidate.typeKey === initialTypeKey)?.typeKey ??
         published[0]?.typeKey ?? '');
-      setValues(item?.payload ?? {}); setTitle(item?.title ?? ''); setReason(''); setError('');
+      setValues(item?.payload ?? {});
+      setExtraValues(Object.fromEntries(Object.entries(item?.payload ?? {}).map(([name, value]) =>
+        [name, JSON.stringify(value, null, 2)])));
+      setTitle(item?.title ?? ''); setReason(''); setError('');
       if (!dialog.current?.open) dialog.current?.showModal();
     } else if (dialog.current?.open) dialog.current.close();
   }, [open, item, types, initialTypeKey]);
@@ -120,6 +125,12 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
     try {
       if (!type) throw new Error('请选择已发布的对象类型');
       const payload = { ...values };
+      const definedNames = new Set(type.publishedDefinition.properties.map((property) => property.name));
+      for (const [name, raw] of Object.entries(extraValues)) {
+        if (definedNames.has(name)) continue;
+        try { payload[name] = JSON.parse(raw); }
+        catch { throw new Error(`${name} 需要有效 JSON 值`); }
+      }
       for (const property of type.publishedDefinition.properties) {
         if (property.computed) { delete payload[property.name]; continue; }
         const value = payload[property.name];
@@ -152,7 +163,7 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
       {error && <Alert variant="error">{error}</Alert>}
       <ObjectTypePicker types={types} value={typeKey} disabled={!!item}
         onChange={(selected) => {
-          if (selected !== typeKey) { setTypeKey(selected); setType(null); setValues({}); }
+          if (selected !== typeKey) { setTypeKey(selected); setType(null); setValues({}); setExtraValues({}); }
         }} />
       <div><Label htmlFor="object-title">标题{item ? '' : '（留空则按模型生成）'}</Label>
         <Input id="object-title" value={title} onChange={(event) => setTitle(event.target.value)} /></div>
@@ -178,6 +189,17 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
           {property.description && <p className="text-xs text-muted-foreground">{property.description}</p>}
         </div>)}
       </div>}
+      {type?.typeKey === typeKey && !type.publishedDefinition.properties.some((property) => !property.computed) &&
+        <p className="rounded-md border border-border p-3 text-sm text-muted-foreground">
+          此对象类型没有已发布的可编辑属性。
+          <Link to={`/ontology/types/${encodeURIComponent(typeKey)}`} onClick={onClose}
+            className="ml-1 text-primary hover:underline">前往本体模型添加并发布属性</Link>
+        </p>}
+      {item && type?.typeKey === typeKey && Object.entries(extraValues).filter(([name]) =>
+        !type.publishedDefinition.properties.some((property) => property.name === name)).map(([name, raw]) =>
+        <div key={name} className="space-y-1"><Label htmlFor={`object-extra-${name}`}>{name}（未建模，JSON 值）</Label>
+          <Textarea id={`object-extra-${name}`} value={raw} rows={2}
+            onChange={(event) => setExtraValues((old) => ({ ...old, [name]: event.target.value }))} /></div>)}
       <div><Label htmlFor="object-reason">变更说明</Label><Input id="object-reason" value={reason}
         onChange={(event) => setReason(event.target.value)} /></div>
       <div className="flex justify-end gap-2"><Button variant="outline" onClick={onClose} disabled={busy}>取消</Button>

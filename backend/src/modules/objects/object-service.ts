@@ -300,8 +300,8 @@ export function queryObjects(query: QueryInput, user?: AuthUser) {
   if (query.typeKey) { where.push('type_key = ?'); params.push(query.typeKey); }
   if (!query.includeDeleted) where.push('deleted = 0');
   if (query.text) {
-    where.push('(title LIKE ? OR payload_json LIKE ?)');
-    params.push(`%${query.text}%`, `%${query.text}%`);
+    where.push('(title LIKE ? OR object_id LIKE ? OR payload_json LIKE ?)');
+    params.push(`%${query.text}%`, `%${query.text}%`, `%${query.text}%`);
   }
   // 简单字段过滤（payload JSON 内字段用 json_extract）
   for (const f of query.filters ?? []) {
@@ -451,6 +451,24 @@ export function invalidateLink(linkId: string, actor: string) {
     actor, eventType: 'link.invalidated', resourceType: 'link', resourceId: linkId,
   });
   return { linkId, valid: false };
+}
+
+// 替换关联时在同一事务中保留旧记录，并校验新关联的类型与基数。
+export function replaceLink(linkId: string, input: {
+  linkKey: string; fromObjectId: string; toObjectId: string;
+  props?: Record<string, unknown>; actor: string;
+}) {
+  const db = getDb();
+  const old = db.prepare('SELECT * FROM link_instance WHERE id = ? AND is_valid = 1').get(linkId) as any;
+  if (!old) throw new AppError('NOT_FOUND', `有效关联不存在: ${linkId}`);
+  return db.transaction(() => {
+    invalidateLink(linkId, input.actor);
+    const next = createLink({ ...input, sourceId: old.source_id ?? undefined });
+    writeAudit({ actor: input.actor, eventType: 'link.replaced', resourceType: 'link',
+      resourceId: next.linkId, before: { linkId, linkKey: old.link_key,
+        fromObjectId: old.from_object_id, toObjectId: old.to_object_id }, after: next });
+    return next;
+  })();
 }
 
 /**
