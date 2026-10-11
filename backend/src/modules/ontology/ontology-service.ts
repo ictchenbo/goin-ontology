@@ -627,6 +627,7 @@ export function updateLinkDef(linkKey: string, patch: {
   inverseName?: string;
   description?: string;
   required?: boolean;
+  allowSelfLoop?: boolean;
   state?: string;
 }, actor: string) {
   const db = getDb();
@@ -643,6 +644,17 @@ export function updateLinkDef(linkKey: string, patch: {
   if (patch.inverseName !== undefined) { fields.push('inverse_name = ?'); values.push(patch.inverseName); }
   if (patch.description !== undefined) { fields.push('description = ?'); values.push(patch.description); }
   if (patch.required !== undefined) { fields.push('required = ?'); values.push(patch.required ? 1 : 0); }
+  if (patch.allowSelfLoop !== undefined) {
+    if (patch.allowSelfLoop && before.fromType !== before.toType) {
+      throw new AppError('SCHEMA_ERROR', '只有起点与终点类型相同的关系才能允许自环');
+    }
+    if (!patch.allowSelfLoop) {
+      const count = (db.prepare(`SELECT COUNT(*) AS count FROM link_instance
+        WHERE link_key = ? AND is_valid = 1 AND from_object_id = to_object_id`).get(linkKey) as { count: number }).count;
+      if (count > 0) throw new AppError('CONFLICT', '已有自环连接，请先移除后再禁止自环');
+    }
+    fields.push('allow_self_loop = ?'); values.push(patch.allowSelfLoop ? 1 : 0);
+  }
   if (patch.state !== undefined) {
     if (!['draft', 'published', 'archived'].includes(patch.state)) {
       throw new AppError('SCHEMA_ERROR', `状态非法: ${patch.state}`);
@@ -773,6 +785,7 @@ export function createLinkDef(input: {
   inverseName?: string;
   description?: string;
   required?: boolean;
+  allowSelfLoop?: boolean;
   actor: string;
 }) {
   const db = getDb();
@@ -780,13 +793,17 @@ export function createLinkDef(input: {
   if (input.cardinality && !['1:1', '1:N', 'N:1', 'N:M'].includes(input.cardinality)) {
     throw new AppError('SCHEMA_ERROR', `基数非法: ${input.cardinality}`);
   }
+  if (input.allowSelfLoop && input.fromType !== input.toType) {
+    throw new AppError('SCHEMA_ERROR', '只有起点与终点类型相同的关系才能允许自环');
+  }
   try {
     db.prepare(`INSERT INTO link_def
-      (link_key, display_name, from_type, to_type, cardinality, inverse_name, description, required, state, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?, 'published', ?, ?)`).run(
+      (link_key, display_name, from_type, to_type, cardinality, inverse_name, description, required,
+       allow_self_loop, state, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?, 'published', ?, ?)`).run(
       input.linkKey, input.displayName, input.fromType, input.toType,
       input.cardinality ?? '1:N', input.inverseName ?? '', input.description ?? '',
-      input.required ? 1 : 0, now, now
+      input.required ? 1 : 0, input.allowSelfLoop ? 1 : 0, now, now
     );
   } catch (e: any) {
     if (String(e.message).includes('UNIQUE')) throw new AppError('CONFLICT', `关系已存在: ${input.linkKey}`);
@@ -826,6 +843,7 @@ function mapLinkDef(r: any) {
     inverseName: r.inverse_name,
     description: r.description,
     required: !!r.required,
+    allowSelfLoop: !!r.allow_self_loop,
     state: r.state,
     createdAt: r.created_at,
     updatedAt: r.updated_at,

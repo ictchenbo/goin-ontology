@@ -426,6 +426,9 @@ export function createLink(input: {
   if (to.type_key !== linkDef.to_type) {
     throw new AppError('SCHEMA_ERROR', `终点类型应为 ${linkDef.to_type}，实际 ${to.type_key}`);
   }
+  if (input.fromObjectId === input.toObjectId && !linkDef.allow_self_loop) {
+    throw new AppError('SCHEMA_ERROR', `关系 ${input.linkKey} 不允许对象连接自身`);
+  }
   // 基数约束：1:1 / 1:N / N:M
   enforceCardinality(db, linkDef, input.fromObjectId, input.toObjectId);
   const id = newId('lnk');

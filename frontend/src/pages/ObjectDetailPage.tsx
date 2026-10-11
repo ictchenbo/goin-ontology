@@ -14,7 +14,7 @@ import { ObjectEditorDialog, ObjectInstance, ObjectType } from './ObjectEditorDi
 
 type Attachment = { id: string; filename: string; byteSize: number };
 type LinkDef = { linkKey: string; displayName: string; fromType: string; toType: string;
-  cardinality: string; state: string };
+  cardinality: string; allowSelfLoop: boolean; state: string };
 type ObjectLink = NonNullable<ObjectInstance['links']>[number];
 type ObjectOption = { objectId: string; title: string; typeKey: string };
 const noTypes: ObjectType[] = [];
@@ -51,21 +51,22 @@ function LinkEditorDialog({ open, object, link, definitions, onClose, onSaved }:
     } else if (dialog.current?.open) dialog.current.close();
   }, [open, link, object, definitions]);
 
-  const searchObjects = useCallback(async (typeKey: string, text: string) => {
+  const searchObjects = useCallback(async (typeKey: string, text: string, allowSelfLoop: boolean) => {
     if (!typeKey) { setOptions([]); return; }
     try {
       const params = new URLSearchParams({ typeKey, limit: '30' });
       if (text.trim()) params.set('text', text.trim());
       const result = await api.get<{ items: ObjectOption[] }>(`/objects?${params}`);
-      setOptions(result.items.filter((item) => item.objectId !== object?.objectId));
+      setOptions(result.items.filter((item) => allowSelfLoop || item.objectId !== object?.objectId));
     } catch (failure) { setError((failure as ApiError).message || '搜索关联对象失败'); }
   }, [object?.objectId]);
   useEffect(() => {
-    if (open && targetType) void searchObjects(targetType, '');
-  }, [open, targetType, searchObjects]);
+    if (open && targetType) void searchObjects(targetType, '', !!definition?.allowSelfLoop);
+  }, [open, targetType, definition?.allowSelfLoop, searchObjects]);
 
   async function save() {
     if (!object || !definition || !otherId) { setError('请选择关系定义和关联对象'); return; }
+    if (otherId === object.objectId && !definition.allowSelfLoop) { setError('此关系不允许对象连接自身'); return; }
     setBusy(true); setError('');
     try {
       const props = JSON.parse(propsText);
@@ -102,9 +103,9 @@ function LinkEditorDialog({ open, object, link, definitions, onClose, onSaved }:
           }}><option value="outgoing">当前对象为起点</option><option value="incoming">当前对象为终点</option></Select></div>}
         <div className="space-y-1"><Label htmlFor="link-object-search">搜索{targetType}对象</Label>
           <div className="flex gap-2"><Input id="link-object-search" value={query} onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void searchObjects(targetType || '', query); } }}
+            onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void searchObjects(targetType || '', query, !!definition?.allowSelfLoop); } }}
             placeholder="输入标题或属性关键词" />
-            <Button variant="outline" onClick={() => void searchObjects(targetType || '', query)}>搜索</Button></div></div>
+            <Button variant="outline" onClick={() => void searchObjects(targetType || '', query, !!definition?.allowSelfLoop)}>搜索</Button></div></div>
         <div className="space-y-1"><Label htmlFor="link-target">关联对象</Label>
           <Select id="link-target" value={otherId} onChange={(event) => setOtherId(event.target.value)}>
             <option value="">请选择对象</option>
@@ -113,6 +114,7 @@ function LinkEditorDialog({ open, object, link, definitions, onClose, onSaved }:
             {options.map((item) => <option key={item.objectId} value={item.objectId}>{item.title} ({item.objectId})</option>)}
           </Select>
           {!options.length && <p className="text-xs text-muted-foreground">暂无匹配对象，请调整搜索词或先创建目标对象。</p>}</div>
+        <p className="text-xs text-muted-foreground">此关系{definition?.allowSelfLoop ? '允许' : '不允许'}对象连接自身。</p>
         <div className="space-y-1"><Label htmlFor="link-props">关系属性（JSON）</Label>
           <Textarea id="link-props" value={propsText} onChange={(event) => setPropsText(event.target.value)} rows={3} /></div>
       </> : <p className="text-sm text-muted-foreground">当前对象类型尚无已发布的关系定义。

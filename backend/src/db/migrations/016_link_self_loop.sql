@@ -1,0 +1,1 @@
+ALTER TABLE link_def ADD COLUMN allow_self_loop INTEGER NOT NULL DEFAULT 0;

@@ -106,3 +106,40 @@ test('共享属性可复用，更新后类型须分别发布新版本', () => {
     }
   }
 });
+
+test('关系自环默认禁止，可显式开启，关闭前需清理已有自环', () => {
+  const file = path.join(os.tmpdir(), `ooda-self-link-${process.pid}-${Date.now()}.db`);
+  process.env.DATABASE_PATH = file;
+  const { closeDb } = require('../src/db/database') as typeof import('../src/db/database');
+  const { runMigrations } = require('../src/db/migrate') as typeof import('../src/db/migrate');
+  const model = require('../src/modules/ontology/ontology-service') as typeof import('../src/modules/ontology/ontology-service');
+  const objects = require('../src/modules/objects/object-service') as typeof import('../src/modules/objects/object-service');
+  try {
+    runMigrations();
+    model.createType({ typeKey: 'Person', displayName: '人员', definition: { properties: [] }, createdBy: 'tester' });
+    model.publishType('Person', 'tester');
+    const person = objects.createObject({ typeKey: 'Person', payload: {}, actor: 'tester' });
+    const other = objects.createObject({ typeKey: 'Person', payload: {}, actor: 'tester' });
+    const relation = model.createLinkDef({ linkKey: 'Friend', displayName: '朋友',
+      fromType: 'Person', toType: 'Person', cardinality: 'N:M', actor: 'tester' });
+    assert.equal(relation.allowSelfLoop, false);
+    assert.throws(() => objects.createLink({ linkKey: 'Friend', fromObjectId: person.objectId,
+      toObjectId: person.objectId, actor: 'tester' }), /不允许对象连接自身/);
+    const ordinary = objects.createLink({ linkKey: 'Friend', fromObjectId: person.objectId,
+      toObjectId: other.objectId, actor: 'tester' });
+    assert.throws(() => objects.replaceLink(ordinary.linkId, { linkKey: 'Friend',
+      fromObjectId: person.objectId, toObjectId: person.objectId, actor: 'tester' }), /不允许对象连接自身/);
+    assert.equal(objects.listLinks({ linkKey: 'Friend' }).some((link) => link.linkId === ordinary.linkId), true);
+    model.updateLinkDef('Friend', { allowSelfLoop: true }, 'tester');
+    const self = objects.createLink({ linkKey: 'Friend', fromObjectId: person.objectId,
+      toObjectId: person.objectId, actor: 'tester' });
+    assert.throws(() => model.updateLinkDef('Friend', { allowSelfLoop: false }, 'tester'), /先移除/);
+    objects.invalidateLink(self.linkId, 'tester');
+    assert.equal(model.updateLinkDef('Friend', { allowSelfLoop: false }, 'tester').allowSelfLoop, false);
+  } finally {
+    closeDb();
+    for (const suffix of ['', '-wal', '-shm']) {
+      try { fs.unlinkSync(file + suffix); } catch { /* 临时文件不存在时忽略 */ }
+    }
+  }
+});

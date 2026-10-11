@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100" role="img" aria-labelledby="title description">
   <title id="title">OODA 本体模型概念关系图</title>
-  <desc id="description">定义层包含接口、共享属性、对象类型、普通属性、只读计算属性和关系类型；逻辑层包含函数、规则、Action、自动化和决策类型；运行层包含对象实例、关系实例、证据与决策案例。计算属性将普通属性映射到函数参数，在读取对象时计算，不写入实例。例如人的年龄由出生日期和当前业务日期计算。</desc>
+  <desc id="description">定义层包含接口、共享属性、对象类型、普通属性、只读计算属性和关系类型；逻辑层包含函数、规则、Action、自动化和决策类型；运行层包含对象实例、关系实例、证据与决策案例。关系类型约束两端对象类型、基数与是否允许自环，自环默认禁止。计算属性将普通属性映射到函数参数，在读取对象时计算，不写入实例。例如人的年龄由出生日期和当前业务日期计算。</desc>
   <defs>
     <linearGradient id="background" x2="1" y2="1"><stop stop-color="#f8fbff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
     <filter id="shadow" x="-20%" y="-30%" width="140%" height="170%"><feDropShadow dx="0" dy="5" stdDeviation="9" flood-color="#142d56" flood-opacity=".09"/></filter>
@@ -63,7 +63,7 @@
   <text class="box-title" x="103" y="406">对象类型</text><text class="box-sub" x="103" y="436">属性集合、分类、版本与实现的接口</text>
   <text class="box-title" x="101" y="590">普通属性</text><text class="box-sub" x="101" y="619">实例中存储的原始业务值</text>
   <text class="box-title" x="396" y="590">只读计算属性</text><text class="box-sub" x="396" y="619">输入属性 → 函数 → 输出类型</text>
-  <text class="box-title" x="103" y="771">关系 Link 类型</text><text class="box-sub" x="103" y="802">约束两个对象类型之间的连接</text>
+  <text class="box-title" x="103" y="771">关系 Link 类型</text><text class="box-sub" x="103" y="802">约束两端类型、基数与自环许可</text>
 
   <!-- 逻辑层 -->
   <g filter="url(#shadow)">
@@ -87,7 +87,7 @@
     <rect x="1190" y="910" width="315" height="90" rx="15" fill="#fff" stroke="#edce9d"/>
   </g>
   <text class="box-title" x="1212" y="243">对象实例</text><text class="box-sub" x="1212" y="271">保存普通属性；读取时显示计算值</text>
-  <text class="box-title" x="1212" y="404">关系实例</text><text class="box-sub" x="1212" y="432">两个对象之间的实际连接</text>
+  <text class="box-title" x="1212" y="404">关系实例</text><text class="box-sub" x="1212" y="432">连接两个实例；自环默认禁止</text>
   <text class="box-title" x="1212" y="770">证据 / 来源记录</text><text class="box-sub" x="1212" y="799">支撑对象事实与追溯</text>
   <text class="box-title" x="1212" y="949">决策案例</text><text class="box-sub" x="1212" y="978">基于对象上下文形成决策记录</text>
 

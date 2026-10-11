@@ -1111,17 +1111,20 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
 }
 
 type LinkDef = { linkKey: string; displayName: string; fromType: string; toType: string;
-  cardinality: string; inverseName: string; description: string; required: boolean; state: string };
+  cardinality: string; inverseName: string; description: string; required: boolean;
+  allowSelfLoop: boolean; state: string };
 type LinkInstance = { linkId: string; linkKey: string; fromObjectId: string; toObjectId: string; isValid: boolean };
 type ObjectOption = { objectId: string; title: string; typeKey: string };
 
 function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boolean; canDelete: boolean }) {
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState<'definition' | 'instances'>('definition');
   const [types, setTypes] = useState<ObjectType[]>([]);
   const [instances, setInstances] = useState<LinkInstance[]>([]);
   const [objects, setObjects] = useState<ObjectOption[]>([]);
   const [selected, setSelected] = useState('');
-  const [form, setForm] = useState<LinkDef>({ linkKey: '', displayName: '', fromType: '', toType: '', cardinality: '1:N', inverseName: '', description: '', required: false, state: 'published' });
+  const [savedAllowSelfLoop, setSavedAllowSelfLoop] = useState(false);
+  const [form, setForm] = useState<LinkDef>({ linkKey: '', displayName: '', fromType: '', toType: '', cardinality: '1:N', inverseName: '', description: '', required: false, allowSelfLoop: false, state: 'published' });
   const [fromId, setFromId] = useState('');
   const [toId, setToId] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -1133,7 +1136,7 @@ function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
       api.get<{ items: ObjectType[] }>('/ontology/types'),
       api.get<{ items: LinkInstance[] }>('/links?limit=100'), api.get<{ items: ObjectOption[] }>('/objects?limit=200'),
     ]);
-    if (a) { setSelected(a.linkKey); setForm(a); }
+    if (a) { setSelected(a.linkKey); setForm(a); setSavedAllowSelfLoop(a.allowSelfLoop); }
     setTypes(b.items); setInstances(c.items); setObjects(d.items);
   }, [initialKey]);
   useEffect(() => { load().catch((e) => setError(message(e))); }, [load]);
@@ -1146,16 +1149,26 @@ function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
   const set = (patch: Partial<LinkDef>) => setForm({ ...form, ...patch });
   const visibleInstances = selected ? instances.filter((x) => x.linkKey === selected) : [];
   const fromOptions = objects.filter((o) => !form.fromType || o.typeKey === form.fromType);
-  const toOptions = objects.filter((o) => !form.toType || o.typeKey === form.toType);
+  const toOptions = objects.filter((o) => (!form.toType || o.typeKey === form.toType) &&
+    (savedAllowSelfLoop || o.objectId !== fromId));
   return <div className="space-y-4"><Notice error={error} info={info} />
-      <Card><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建 Link 定义'}</CardTitle></CardHeader><CardContent className="space-y-4">
+    <div role="tablist" aria-label="关系详情" className="flex flex-wrap gap-2 border-b border-border pb-3">
+      <Button role="tab" id="link-tab-definition" aria-selected={activeTab === 'definition'}
+        aria-controls="link-panel-definition" variant={activeTab === 'definition' ? 'primary' : 'outline'}
+        onClick={() => setActiveTab('definition')}>编辑</Button>
+      <Button role="tab" id="link-tab-instances" aria-selected={activeTab === 'instances'}
+        aria-controls="link-panel-instances" variant={activeTab === 'instances' ? 'primary' : 'outline'}
+        disabled={!selected} onClick={() => setActiveTab('instances')}>对象连接实例</Button>
+    </div>
+      <Card id="link-panel-definition" role="tabpanel" aria-labelledby="link-tab-definition"
+        hidden={activeTab !== 'definition'}><CardHeader><CardTitle>{selected ? `编辑 ${selected}` : '新建 Link 定义'}</CardTitle></CardHeader><CardContent className="space-y-4">
         <div className="grid gap-3 md:grid-cols-2">
           <Field label="Link 标识" value={form.linkKey} onChange={(v) => set({ linkKey: v })} disabled={!!selected || !canEdit} />
           <Field label="显示名称" value={form.displayName} onChange={(v) => set({ displayName: v })} disabled={!canEdit} />
-          <div className="space-y-1"><Label htmlFor="link-from-type">起点类型</Label><Select id="link-from-type" value={form.fromType} disabled={!!selected || !canEdit} onChange={(e) => set({ fromType: e.target.value })}>
+          <div className="space-y-1"><Label htmlFor="link-from-type">起点类型</Label><Select id="link-from-type" value={form.fromType} disabled={!!selected || !canEdit} onChange={(e) => set({ fromType: e.target.value, allowSelfLoop: e.target.value === form.toType && form.allowSelfLoop })}>
             <option value="">选择类型</option>{types.map((t) => <option key={t.typeKey} value={t.typeKey}>{t.displayName} ({t.typeKey})</option>)}
           </Select></div>
-          <div className="space-y-1"><Label htmlFor="link-to-type">终点类型</Label><Select id="link-to-type" value={form.toType} disabled={!!selected || !canEdit} onChange={(e) => set({ toType: e.target.value })}>
+          <div className="space-y-1"><Label htmlFor="link-to-type">终点类型</Label><Select id="link-to-type" value={form.toType} disabled={!!selected || !canEdit} onChange={(e) => set({ toType: e.target.value, allowSelfLoop: e.target.value === form.fromType && form.allowSelfLoop })}>
             <option value="">选择类型</option>{types.map((t) => <option key={t.typeKey} value={t.typeKey}>{t.displayName} ({t.typeKey})</option>)}
           </Select></div>
           <div className="space-y-1"><Label htmlFor="link-cardinality">基数</Label><Select id="link-cardinality" value={form.cardinality} disabled={!canEdit} onChange={(e) => set({ cardinality: e.target.value })}>
@@ -1163,11 +1176,15 @@ function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
           </Select></div>
           <Field label="反向名称" value={form.inverseName || ''} onChange={(v) => set({ inverseName: v })} disabled={!canEdit} />
           <Field label="说明" value={form.description || ''} onChange={(v) => set({ description: v })} disabled={!canEdit} />
-          <div className="flex items-end gap-4 pb-2"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.required} disabled={!canEdit} onChange={(e) => set({ required: e.target.checked })} />必需关系</label>
+          <div className="flex flex-wrap items-end gap-4 pb-2"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.required} disabled={!canEdit} onChange={(e) => set({ required: e.target.checked })} />必需关系</label>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.allowSelfLoop}
+              disabled={!canEdit || !form.fromType || form.fromType !== form.toType}
+              onChange={(e) => { set({ allowSelfLoop: e.target.checked }); if (!e.target.checked && fromId === toId) setToId(''); }} />允许自环</label>
             {selected && <Select aria-label="关系状态" value={form.state} disabled={!canEdit} onChange={(e) => set({ state: e.target.value })}>
               {['draft', 'published', 'archived'].map((v) => <option key={v}>{v}</option>)}
             </Select>}</div>
         </div>
+        <p className="text-xs text-muted-foreground">默认禁止对象连接自身；仅当起点和终点类型相同时可启用自环。</p>
         <div className="flex flex-wrap gap-2">
           {canEdit && <Button disabled={busy} onClick={() => run(selected ? '更新关系定义' : '创建关系定义', async () => {
             if (!form.linkKey || !form.displayName || !form.fromType || !form.toType) throw new Error('标识、名称与两端类型均必填');
@@ -1176,16 +1193,22 @@ function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
           })}>{selected ? '保存定义' : '创建定义'}</Button>}
         </div>
       </CardContent></Card>
-    <Card><CardHeader><CardTitle>对象连接实例</CardTitle></CardHeader><CardContent className="space-y-4">
+    <Card id="link-panel-instances" role="tabpanel" aria-labelledby="link-tab-instances"
+      hidden={activeTab !== 'instances'}><CardHeader><CardTitle>对象连接实例</CardTitle></CardHeader><CardContent className="space-y-4">
       {canEdit && <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-        <div className="space-y-1"><Label htmlFor="link-from-object">起点对象</Label><Select id="link-from-object" value={fromId} onChange={(e) => setFromId(e.target.value)}><option value="">选择对象</option>
+        <div className="space-y-1"><Label htmlFor="link-from-object">起点对象</Label><Select id="link-from-object" value={fromId} onChange={(e) => {
+          setFromId(e.target.value); if (!savedAllowSelfLoop && e.target.value === toId) setToId('');
+        }}><option value="">选择对象</option>
           {fromOptions.map((o) => <option key={o.objectId} value={o.objectId}>{o.title} ({o.objectId})</option>)}
         </Select></div>
         <div className="space-y-1"><Label htmlFor="link-to-object">终点对象</Label><Select id="link-to-object" value={toId} onChange={(e) => setToId(e.target.value)}><option value="">选择对象</option>
           {toOptions.map((o) => <option key={o.objectId} value={o.objectId}>{o.title} ({o.objectId})</option>)}
         </Select></div>
-        <Button className="self-end" disabled={busy || !selected || !fromId || !toId} onClick={() => run('建立连接', () => api.post('/links', { linkKey: selected, fromObjectId: fromId, toObjectId: toId }))}>建立连接</Button>
+        <Button className="self-end" disabled={busy || !selected || !fromId || !toId || (!savedAllowSelfLoop && fromId === toId)}
+          onClick={() => run('建立连接', () => api.post('/links', { linkKey: selected, fromObjectId: fromId, toObjectId: toId }))}>建立连接</Button>
       </div>}
+      {!savedAllowSelfLoop && <p className="text-xs text-muted-foreground">当前关系不允许起点与终点为同一对象。</p>}
+      {form.allowSelfLoop !== savedAllowSelfLoop && <p className="text-xs text-amber-600 dark:text-amber-400">自环设置尚未保存，连接实例仍按已保存定义校验。</p>}
       <div className="space-y-2">{visibleInstances.map((x) => <div key={x.linkId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-3 text-sm">
         <span><span className="font-mono">{x.linkKey}</span> · {x.fromObjectId} → {x.toObjectId}</span>
         {canEdit && <Button size="sm" variant="outline" disabled={busy} onClick={() => {
