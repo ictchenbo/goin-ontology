@@ -21,6 +21,11 @@ const TABS: Array<{ key: Tab; label: string }> = [
   { key: 'interfaces', label: 'Interface' },
   { key: 'automations', label: '自动化' },
 ];
+const TYPE_CATEGORIES = [
+  { value: 'entity', label: '实体（entity）' },
+  { value: 'event', label: '事件（event）' },
+  { value: 'decision', label: '决策（decision）' },
+];
 
 function message(error: unknown): string {
   return (error as ApiError)?.message || (error instanceof Error ? error.message : '操作失败');
@@ -53,6 +58,20 @@ function Field({ label, value, onChange, disabled = false, required = false, pla
   return <div className="space-y-1">
     <Label htmlFor={id}>{label}</Label>
     <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} required={required} placeholder={placeholder} />
+  </div>;
+}
+
+function TypeCategorySelect({ value, onChange, disabled = false }: {
+  value: string; onChange: (value: string) => void; disabled?: boolean;
+}) {
+  const id = useId();
+  return <div className="space-y-1">
+    <Label htmlFor={id}>分类</Label>
+    <Select id={id} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+      {value && !TYPE_CATEGORIES.some((item) => item.value === value) &&
+        <option value={value}>原有分类（{value}）</option>}
+      {TYPE_CATEGORIES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+    </Select>
   </div>;
 }
 
@@ -330,7 +349,7 @@ function TypeMetaDialog({ item, onClose, onSave }: {
       <Field label="类型标识" value={draft.typeKey} onChange={(typeKey) => setDraft({ ...draft, typeKey })}
         disabled={!!item?.typeKey} required />
       <Field label="显示名称" value={draft.displayName} onChange={(displayName) => setDraft({ ...draft, displayName })} required />
-      <Field label="分类" value={draft.category} onChange={(category) => setDraft({ ...draft, category })} />
+      <TypeCategorySelect value={draft.category} onChange={(category) => setDraft({ ...draft, category })} />
       <Field label="说明" value={draft.description} onChange={(description) => setDraft({ ...draft, description })} />
     </div>
     <div className="mt-6 flex justify-end gap-2"><Button variant="outline" disabled={saving} onClick={onClose}>取消</Button>
@@ -870,7 +889,7 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
           <div className="grid gap-3 md:grid-cols-2">
             <Field label="类型标识" value={key} onChange={setKey} disabled required />
             <Field label="显示名称" value={name} onChange={setName} disabled={!canEdit} required />
-            <Field label="分类" value={category} onChange={setCategory} disabled={!canEdit} />
+            <TypeCategorySelect value={category} onChange={setCategory} disabled={!canEdit} />
             <Field label="说明" value={description} onChange={setDescription} disabled={!canEdit} />
             <Field label="标题字段" value={displayProperty} onChange={setDisplayProperty} disabled={!canEdit} />
             <Field label="标题模板" value={titleTemplate} onChange={setTitleTemplate} disabled={!canEdit} placeholder="例如 {name}" />
