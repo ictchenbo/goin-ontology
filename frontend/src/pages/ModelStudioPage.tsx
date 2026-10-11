@@ -188,6 +188,7 @@ type ObjectType = {
   typeKey: string; displayName: string; description: string; category: string;
   interfaces: string[]; state: string; currentVersion: number; propertyCount?: number;
   definition: { properties: Property[]; displayProperty?: string; titleTemplate?: string; searchFields?: string[] };
+  publishedDefinition: { properties: Property[] };
   versions: Array<{ schemaVersion: number; state: string; changeNote: string }>;
 };
 type InterfaceDef = { interfaceKey: string; displayName: string; description: string; properties: Array<{ name: string; type: string; required?: boolean }>; capabilities: string[] };
@@ -775,9 +776,14 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
   }, [typeKey]);
   useEffect(() => { void load().catch((e) => setError(message(e))); }, [load]);
 
-  async function run(label: string, task: () => Promise<unknown>) {
+  async function run(label: string, task: () => Promise<unknown>, keepInterfaceDraft = false) {
     setBusy(true); setError(null); setInfo(null);
-    try { await task(); await load(); setInfo(`${label}成功`); }
+    try {
+      const pendingInterfaces = implemented;
+      await task(); await load();
+      if (keepInterfaceDraft) setImplemented(pendingInterfaces);
+      setInfo(`${label}成功`);
+    }
     catch (e) { setError(message(e)); }
     finally { setBusy(false); }
   }
@@ -817,6 +823,51 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
     setProperties([...properties, { ...item.definition, sharedKey: item.propertyKey, sharedVersion: item.version }]);
     setInfo('共享属性已加入列表，请保存并发布类型版本');
   }
+  function changeInterface(item: InterfaceDef, checked: boolean) {
+    setError(null);
+    if (!checked) {
+      setImplemented(implemented.filter((key) => key !== item.interfaceKey));
+      setInfo('已取消接口选择；已有属性会保留，保存基本信息后生效');
+      return;
+    }
+    const additions: Property[] = [];
+    for (const requirement of item.properties) {
+      const existing = properties.find((property) => property.name === requirement.name);
+      if (existing) {
+        if (existing.type !== requirement.type || (requirement.required && !existing.required && existing.sharedKey)) {
+          setError(`属性 ${requirement.name} 与接口契约不兼容，请先调整属性或共享定义`);
+          return;
+        }
+        if (requirement.required && !existing.required) {
+          additions.push({ ...existing, required: true });
+        }
+        continue;
+      }
+      const shared = sharedProperties.find((candidate) => candidate.definition.name === requirement.name &&
+        candidate.definition.type === requirement.type && (!requirement.required || candidate.definition.required));
+      if (shared) {
+        additions.push({ ...shared.definition, sharedKey: shared.propertyKey, sharedVersion: shared.version });
+      } else if (requirement.type === 'enum' || requirement.type === 'reference') {
+        setError(`接口属性 ${requirement.name} 需要枚举值或引用类型，请先建立兼容的共享属性`);
+        return;
+      } else {
+        additions.push({ name: requirement.name, label: requirement.name, type: requirement.type,
+          required: !!requirement.required });
+      }
+    }
+    setProperties(properties.map((property) => additions.find((candidate) => candidate.name === property.name) ?? property)
+      .concat(additions.filter((candidate) => !properties.some((property) => property.name === candidate.name))));
+    setImplemented([...implemented, item.interfaceKey]);
+    setInfo(additions.length ? `已补齐 ${additions.length} 个接口属性；请保存属性版本、发布，再保存基本信息` :
+      '属性已满足接口契约，请保存基本信息');
+  }
+  const unpublishedInterfaces = implemented.filter((interfaceKey) => {
+    const contract = interfaces.find((item) => item.interfaceKey === interfaceKey);
+    return contract?.properties.some((requirement) => {
+      const actual = selected?.publishedDefinition.properties.find((property) => property.name === requirement.name);
+      return !actual || actual.type !== requirement.type || (requirement.required && !actual.required);
+    });
+  });
   async function promoteProperty(index: number, property: Property) {
     setBusy(true); setError(null); setInfo(null);
     try {
@@ -896,24 +947,27 @@ function TypeManager({ typeKey, canEdit, canDelete }: { typeKey: string; canEdit
           </div>
           <div><Label>实现的 Interface</Label><div className="mt-2 flex flex-wrap gap-3">
             {interfaces.map((item) => <label key={item.interfaceKey} className="flex items-center gap-2 text-sm">
-              <input type="checkbox" disabled={!canEdit} checked={implemented.includes(item.interfaceKey)} onChange={(e) => setImplemented(e.target.checked ? [...implemented, item.interfaceKey] : implemented.filter((x) => x !== item.interfaceKey))} />
+              <input type="checkbox" disabled={!canEdit} checked={implemented.includes(item.interfaceKey)} onChange={(e) => changeInterface(item, e.target.checked)} />
               {item.displayName}</label>)}
             {!interfaces.length && <span className="text-sm text-muted-foreground">暂无 Interface 定义</span>}
-          </div></div></div>
+          </div><p className="mt-2 text-xs text-muted-foreground">勾选后自动补齐契约属性；同名属性保留现有定义，取消勾选不删除属性。</p>
+          {unpublishedInterfaces.length > 0 && <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+            {unpublishedInterfaces.join('、')} 的属性尚未发布，请先保存属性版本并发布，然后保存基本信息。
+          </p>}</div></div>
           <div className="grid gap-3 md:grid-cols-2">
             <Field label="版本说明" value={note} onChange={setNote} disabled={!canEdit} />
             <JsonField label="迁移规则（删除或更改属性时填写）" value={migration} onChange={setMigration} rows={3} />
           </div>
           <div className="flex flex-wrap gap-2">
-            {canEdit && <><Button variant="outline" disabled={busy} onClick={() => run('保存基本信息',
+            {canEdit && <><Button variant="outline" disabled={busy || unpublishedInterfaces.length > 0} onClick={() => run('保存基本信息',
               () => api.patch(`/ontology/types/${encodeURIComponent(key)}`, { displayName: name, category, description, interfaces: implemented }))}>保存基本信息</Button>
               <Button disabled={busy} onClick={() => run('创建属性版本', () => api.post(`/ontology/types/${encodeURIComponent(key)}/versions`, {
                 definition: definition(), changeNote: note, migration: parseJson(migration, '迁移规则'),
-              }))}>保存属性为新版本</Button>
+              }), true)}>保存属性为新版本</Button>
               {canDelete && <Button variant="secondary" disabled={busy || !latest || latest.state === 'published'} onClick={() => run('发布版本',
                 () => api.post(`/ontology/types/${encodeURIComponent(key)}/publish-version`, {
                   schemaVersion: latest?.schemaVersion, migration: parseJson(migration, '迁移规则'),
-                }))}>发布 v{latest?.schemaVersion || selected?.currentVersion}</Button>}</>}
+                }), true)}>发布 v{latest?.schemaVersion || selected?.currentVersion}</Button>}</>}
           </div>
           <div className="text-xs text-muted-foreground">版本：{selected?.versions.map((v) => `v${v.schemaVersion} ${v.state}`).join(' · ')}</div>
           {canDelete && selected && <div className="flex flex-wrap items-end gap-2">
