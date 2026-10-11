@@ -45,6 +45,22 @@ test('白名单函数', () => {
   assert.equal(evaluate('max(a, b)', ctx), 10);
 });
 
+test('周岁按生日计算，并支持指定业务时区的当前日期', () => {
+  assert.equal(evaluate('age_years("2000-10-11", "2026-10-10")', {}), 25);
+  assert.equal(evaluate('age_years("2000-10-11", "2026-10-11")', {}), 26);
+  assert.equal(evaluate('age_years("2000-02-29", "2025-02-28")', {}), 24);
+  assert.equal(evaluate('age_years("2000-02-29", "2025-03-01")', {}), 25);
+  assert.throws(() => evaluate('age_years("2027-01-01", "2026-01-01")', {}), /出生日期不能晚于/);
+  assert.throws(() => evaluate('age_years("2024-02-30", "2026-01-01")', {}), /无效日历日期/);
+  assert.throws(() => evaluate('age_years("2024-01-01Tbad", "2026-01-01")', {}), /无法解析日期/);
+  assert.throws(() => evaluate('today("invalid-zone")', {}), /无效时区/);
+  const expected = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const part = (type: string) => expected.find((item) => item.type === type)?.value;
+  assert.equal(evaluate('today("Asia/Shanghai")', {}), `${part('year')}-${part('month')}-${part('day')}`);
+});
+
 test('依赖枚举', () => {
   const deps = expressionDependencies('proposed[0].serviceScore > threshold AND risk < 50');
   assert.ok(deps.includes('proposed.0.serviceScore') || deps.includes('proposed[0].serviceScore'));

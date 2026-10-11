@@ -63,6 +63,26 @@ test('对象计算属性按读取时的输入和权限计算，且不可写入',
     functions.upsertFunction({ functionKey: 'double_value', name: '三倍', parameters: ['value'],
       expression: 'value * 3', outputType: 'number' }, 'tester');
     assert.equal(objects.getObject(created.objectId).payload.doubleTemperature, 15);
+
+    functions.upsertFunction({ functionKey: 'person_age', name: '周岁', parameters: ['birth_date'],
+      expression: 'age_years(birth_date, today("Asia/Shanghai"))', outputType: 'number' }, 'tester');
+    model.createType({ typeKey: 'Person', displayName: '人', createdBy: 'tester', definition: { properties: [
+      { name: 'birthDate', label: '出生日期', type: 'datetime' },
+      { name: 'age', label: '年龄', type: 'number',
+        computed: { functionKey: 'person_age', inputs: { birth_date: 'birthDate' } } },
+    ] } });
+    model.publishType('Person', 'tester');
+    const person = objects.createObject({ typeKey: 'Person', actor: 'tester',
+      payload: { birthDate: '2000-10-11' } });
+    const expectedAge = functions.evaluateFunction('person_age', { birth_date: '2000-10-11' }).result;
+    assert.equal(person.payload.age, expectedAge);
+    assert.equal(objects.getObject(person.objectId).payload.age, expectedAge);
+    assert.equal(objects.queryObjects({ typeKey: 'Person' }).items[0].preview.age, expectedAge);
+    const storedPerson = getDb().prepare('SELECT payload_json FROM object_instance WHERE object_id = ?')
+      .get(person.objectId) as { payload_json: string };
+    assert.equal(Object.hasOwn(JSON.parse(storedPerson.payload_json), 'age'), false);
+    assert.throws(() => objects.updateObject({ objectId: person.objectId,
+      payload: { age: 99 }, actor: 'tester' }), /计算属性不可写入/);
   } finally {
     closeDb();
     for (const suffix of ['', '-wal', '-shm']) {

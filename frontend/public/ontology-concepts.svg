@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1100" viewBox="0 0 1600 1100" role="img" aria-labelledby="title description">
   <title id="title">OODA 本体模型概念关系图</title>
-  <desc id="description">定义层包含接口、共享属性、对象类型、普通属性、只读计算属性和关系类型；逻辑层包含函数、规则、Action、自动化和决策类型；运行层包含对象实例、关系实例、证据与决策案例。计算属性将普通属性映射到函数参数，在读取对象时计算，不写入实例。</desc>
+  <desc id="description">定义层包含接口、共享属性、对象类型、普通属性、只读计算属性和关系类型；逻辑层包含函数、规则、Action、自动化和决策类型；运行层包含对象实例、关系实例、证据与决策案例。计算属性将普通属性映射到函数参数，在读取对象时计算，不写入实例。例如人的年龄由出生日期和当前业务日期计算。</desc>
   <defs>
     <linearGradient id="background" x2="1" y2="1"><stop stop-color="#f8fbff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
     <filter id="shadow" x="-20%" y="-30%" width="140%" height="170%"><feDropShadow dx="0" dy="5" stdDeviation="9" flood-color="#142d56" flood-opacity=".09"/></filter>
@@ -92,5 +92,5 @@
   <text class="box-title" x="1212" y="949">决策案例</text><text class="box-sub" x="1212" y="978">基于对象上下文形成决策记录</text>
 
   <rect x="56" y="1044" width="1488" height="35" rx="9" fill="#e4ecfa"/>
-  <text x="78" y="1067" font-size="14" fill="#415675">计算属性不写入实例或修订历史；函数表达式更新后，下次读取使用当前函数版本重新计算。</text>
+  <text x="78" y="1067" font-size="14" fill="#415675">例如：人的出生日期 → 周岁函数（按业务时区取今天）→ 年龄；结果不入库，下次读取重新计算。</text>
 </svg>

@@ -1322,7 +1322,7 @@ function FunctionManager({ initialKey, canEdit }: { initialKey: string; canEdit:
       <Field label="说明" value={form.description || ''} onChange={(v) => setForm({ ...form, description: v })} disabled={!canEdit} />
       <div className="space-y-1"><Label htmlFor="function-expression">DSL 表达式</Label><Textarea id="function-expression" className="font-mono text-xs" rows={4} value={form.expression} disabled={!canEdit}
         onChange={(e) => setForm({ ...form, expression: e.target.value })} placeholder="severity * exposure" /></div>
-      <p className="text-xs text-muted-foreground">参数可以直接在表达式中使用；规则和 Action 前置条件可通过函数标识调用。</p>
+      <p className="text-xs text-muted-foreground">参数可以直接在表达式中使用；函数可用于规则、Action 前置条件和对象类型的只读计算属性。周岁示例：参数 birth_date，数值输出，表达式 age_years(birth_date, today(&quot;Asia/Shanghai&quot;))。</p>
       <div className="flex flex-wrap gap-2">
         {canEdit && <Button disabled={busy} onClick={() => run(selected ? '更新函数' : '创建函数', async () => {
           if (!form.functionKey || !form.name || !form.expression) throw new Error('标识、名称和表达式必填');

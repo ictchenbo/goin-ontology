@@ -321,7 +321,7 @@ function truthy(v: unknown): boolean {
 const ALLOWED_FUNCS = new Set([
   'now', 'today', 'abs', 'round', 'floor', 'ceil', 'min', 'max', 'sum', 'avg', 'count',
   'coalesce', 'in', 'contains', 'startswith', 'endswith', 'len', 'days_between', 'hours_between',
-  'minutes_between', 'date_diff', 'between', 'clamp', 'if', 'is_null', 'is_number', 'to_number',
+  'minutes_between', 'date_diff', 'age_years', 'between', 'clamp', 'if', 'is_null', 'is_number', 'to_number',
   'to_string', 'lower', 'upper', 'exists', 'any', 'all', 'first', 'date_add',
 ]);
 
@@ -343,7 +343,21 @@ function callFunc(name: string, args: unknown[]): unknown {
   }
   switch (name) {
     case 'now': return new Date().toISOString();
-    case 'today': return new Date().toISOString().slice(0, 10);
+    case 'today': {
+      if (args.length === 0) return new Date().toISOString().slice(0, 10);
+      if (args.length !== 1 || typeof args[0] !== 'string') {
+        throw new AppError('VALIDATION_ERROR', 'today 只接受一个时区名称');
+      }
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: args[0], year: 'numeric', month: '2-digit', day: '2-digit',
+        }).formatToParts(new Date());
+        const value = (type: string) => parts.find((part) => part.type === type)?.value;
+        return `${value('year')}-${value('month')}-${value('day')}`;
+      } catch {
+        throw new AppError('VALIDATION_ERROR', `无效时区: ${args[0]}`);
+      }
+    }
     case 'abs': return Math.abs(toNumber(args[0]));
     case 'round': {
       const digits = args.length > 1 ? toNumber(args[1]) : 0;
@@ -391,6 +405,17 @@ function callFunc(name: string, args: unknown[]): unknown {
     case 'hours_between': return timeDiffDays(args[0], args[1]) * 24;
     case 'minutes_between': return timeDiffDays(args[0], args[1]) * 24 * 60;
     case 'date_diff': return timeDiffDays(args[0], args[1]);
+    case 'age_years': {
+      if (args.length !== 2) throw new AppError('VALIDATION_ERROR', 'age_years 需要出生日期和计算日期');
+      const birth = calendarDate(args[0]);
+      const asOf = calendarDate(args[1]);
+      if (birth.year > asOf.year || (birth.year === asOf.year &&
+        (birth.month > asOf.month || (birth.month === asOf.month && birth.day > asOf.day)))) {
+        throw new AppError('VALIDATION_ERROR', '出生日期不能晚于计算日期');
+      }
+      return asOf.year - birth.year -
+        (asOf.month < birth.month || (asOf.month === birth.month && asOf.day < birth.day) ? 1 : 0);
+    }
     case 'between': {
       const x = toNumber(args[0]);
       return x >= toNumber(args[1]) && x <= toNumber(args[2]);
@@ -431,6 +456,23 @@ function toDate(v: unknown): Date {
   const d = new Date(String(v ?? ''));
   if (Number.isNaN(d.getTime())) throw new AppError('VALIDATION_ERROR', `无法解析日期: ${String(v)}`);
   return d;
+}
+
+function calendarDate(value: unknown): { year: number; month: number; day: number } {
+  if (typeof value !== 'string') throw new AppError('VALIDATION_ERROR', '日期必须是 ISO 日期字符串');
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:$|T)/.exec(value);
+  if (!match) throw new AppError('VALIDATION_ERROR', `无法解析日期: ${value}`);
+  if (value.length > 10 && Number.isNaN(Date.parse(value))) {
+    throw new AppError('VALIDATION_ERROR', `无法解析日期: ${value}`);
+  }
+  const [, y, m, d] = match;
+  const year = Number(y); const month = Number(m); const day = Number(d);
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+  if (year < 1 || date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month ||
+    date.getUTCDate() !== day) throw new AppError('VALIDATION_ERROR', `无效日历日期: ${value}`);
+  return { year, month, day };
 }
 
 function timeDiffDays(a: unknown, b: unknown): number {
