@@ -8,6 +8,7 @@ import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ModelStudioPage, ObjectTypeDetailPage, ModelModuleDetailPage } from './pages/ModelStudioPage';
 import { ObjectsPage } from './pages/ObjectsPage';
+import { ObjectDetailPage } from './pages/ObjectDetailPage';
 import { CasesPage } from './pages/CasesPage';
 import { CaseDetailPage } from './pages/CaseDetailPage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
@@ -44,7 +45,7 @@ export default function App() {
         <Route path="ontology/:module" element={<ModelStudioPage />} />
         <Route path="ontology/:module/:itemKey" element={<ModelModuleDetailPage />} />
         <Route path="objects" element={<ObjectsPage />} />
-        <Route path="objects/:objectId" element={<ObjectsPage />} />
+        <Route path="objects/:objectId" element={<ObjectDetailPage />} />
         <Route path="cases" element={<CasesPage />} />
         <Route path="cases/:caseId" element={<CaseDetailPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
