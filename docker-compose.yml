@@ -1,0 +1,54 @@
+# Ontology OODA 决策平台 - Docker Compose
+# 默认端口：后端 3000 / 前端 18000
+# 端口冲突时可用环境变量覆盖，例如：
+#   BACKEND_PORT=13000 FRONTEND_PORT=18001 docker compose up -d
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ontology-ooda-api
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_PATH: /data/ontology.db
+      JWT_SECRET: ${JWT_SECRET:-ontology-ooda-dev-secret-change-me}
+      SEED_ON_BOOT: ${SEED_ON_BOOT:-1}
+      ATTACHMENT_DIR: /data/attachments
+      OUTBOX_TARGETS_JSON: ${OUTBOX_TARGETS_JSON:-{}}
+      WEBHOOK_SOURCES_JSON: ${WEBHOOK_SOURCES_JSON:-{}}
+      AI_ADAPTER_URL: ${AI_ADAPTER_URL:-}
+      AI_ADAPTER_KEY: ${AI_ADAPTER_KEY:-}
+    volumes:
+      - ooda-data:/data
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ontology-ooda-web
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-18000}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  ooda-data:
