@@ -72,11 +72,19 @@ export function ObjectsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { setDraft(query); }, [query]);
-  useEffect(() => {
-    void api.get<{ items: ObjectType[] }>('/ontology/types')
-      .then((result) => setTypes(result.items.filter((type) => type.state === 'published')))
-      .catch((failure: ApiError) => setError(failure.message || '加载对象类型失败'));
+  const loadTypes = useCallback(async () => {
+    const result = await api.get<{ items: ObjectType[] }>('/ontology/types');
+    setTypes([...result.items].sort((a, b) =>
+      (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || '') ||
+      (b.createdAt || '').localeCompare(a.createdAt || '')));
   }, []);
+  useEffect(() => {
+    void loadTypes().catch((failure: ApiError) => setError(failure.message || '加载对象类型失败'));
+  }, [loadTypes]);
+  async function openEditor() {
+    try { await loadTypes(); setEditorOpen(true); }
+    catch (failure) { setError((failure as ApiError).message || '加载对象类型失败'); }
+  }
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
@@ -111,7 +119,7 @@ export function ObjectsPage() {
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h1 className="text-2xl font-bold">对象列表</h1>
         <p className="text-muted-foreground">在列表中查找实例，进入详情查看属性、关联、证据和历史。</p></div>
-      {canEdit && <Button disabled={!types.length} onClick={() => setEditorOpen(true)}>新建对象</Button>}
+      {canEdit && <Button onClick={() => void openEditor()}>新建对象</Button>}
     </div>
     {error && <Alert variant="error">{error}</Alert>}
     <Card><CardContent className="space-y-4 pt-5">
@@ -123,7 +131,8 @@ export function ObjectsPage() {
           <div className="min-w-[180px] space-y-1"><Label htmlFor="object-type-filter">对象类型</Label>
             <Select id="object-type-filter" value={typeFilter} onChange={(event) => updateFilters({ type: event.target.value, page: '' })}>
               <option value="">全部类型</option>
-              {types.map((type) => <option key={type.typeKey} value={type.typeKey}>{type.displayName} ({type.typeKey})</option>)}
+              {types.filter((type) => type.state === 'published').map((type) =>
+                <option key={type.typeKey} value={type.typeKey}>{type.displayName} ({type.typeKey})</option>)}
             </Select></div>
           <Button disabled={loading} onClick={submitSearch}>搜索</Button>
         </div>

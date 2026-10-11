@@ -1,5 +1,6 @@
 /** 对象实例表单：按已发布模型生成属性编辑控件。 */
 import React, { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -25,7 +26,65 @@ type PropertyDef = { name: string; label: string; type: string; required?: boole
   enumValues?: string[]; refType?: string; description?: string;
   computed?: { functionKey: string; inputs: Record<string, string> } };
 export type ObjectType = { typeKey: string; displayName: string; state: string;
+  createdAt?: string; updatedAt?: string;
   publishedDefinition: { properties: PropertyDef[] } };
+
+function ObjectTypePicker({ types, value, disabled, onChange }: {
+  types: ObjectType[]; value: string; disabled: boolean; onChange: (typeKey: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [active, setActive] = useState(0);
+  const selected = types.find((type) => type.typeKey === value);
+  const matches = types.filter((type) => `${type.displayName} ${type.typeKey}`
+    .toLowerCase().includes(query.trim().toLowerCase()));
+  return <div className="space-y-1" onBlurCapture={(event) => {
+    if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+  }}>
+    <Label htmlFor="object-type-search">对象类型</Label>
+    <div className="relative">
+      <Input id="object-type-search" role="combobox" aria-autocomplete="list"
+        aria-expanded={open} aria-controls="object-type-options"
+        aria-activedescendant={open && matches[active] ? `object-type-${matches[active].typeKey}` : undefined}
+        disabled={disabled} value={open ? query : selected ? `${selected.displayName} (${selected.typeKey})` : ''}
+        placeholder="搜索对象类型名称或标识"
+        onFocus={() => { setQuery(''); setActive(0); setOpen(true); }}
+        onClick={() => { if (!open) { setQuery(''); setActive(0); setOpen(true); } }}
+        onChange={(event) => { setQuery(event.target.value); setActive(0); setOpen(true); }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') { setOpen(false); return; }
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault(); setOpen(true);
+            setActive((index) => Math.max(0, Math.min(matches.length - 1,
+              index + (event.key === 'ArrowDown' ? 1 : -1))));
+          }
+          if (event.key === 'Enter' && open) {
+            event.preventDefault();
+            if (matches[active]?.state === 'published') {
+              onChange(matches[active].typeKey); setOpen(false);
+            }
+          }
+        }} />
+      {open && <div id="object-type-options" role="listbox" aria-label="对象类型搜索结果"
+        className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-border bg-card p-1 shadow-lg"
+        onMouseDown={(event) => event.preventDefault()}>
+        {matches.length ? matches.map((candidate, index) => candidate.state === 'published' ?
+          <button key={candidate.typeKey} id={`object-type-${candidate.typeKey}`} type="button" role="option"
+            aria-selected={candidate.typeKey === value} onClick={() => { onChange(candidate.typeKey); setOpen(false); }}
+            className={`block w-full rounded px-3 py-2 text-left text-sm hover:bg-accent ${index === active ? 'bg-accent' : ''}`}>
+            {candidate.displayName} <span className="font-mono text-xs text-muted-foreground">({candidate.typeKey})</span>
+          </button> : <div key={candidate.typeKey} id={`object-type-${candidate.typeKey}`} role="option"
+            aria-selected={false} aria-disabled="true" className={`flex items-center justify-between gap-2 rounded px-3 py-2 text-sm ${index === active ? 'bg-accent' : ''}`}>
+            <span>{candidate.displayName} <span className="font-mono text-xs text-muted-foreground">({candidate.typeKey})</span>
+              <span className="ml-2 text-xs text-muted-foreground">{candidate.state === 'draft' ? '草稿，发布后可选' : '不可用于新建对象'}</span></span>
+            {candidate.state === 'draft' && <Link className="shrink-0 text-xs text-primary hover:underline"
+              to={`/ontology/types/${encodeURIComponent(candidate.typeKey)}`}>前往发布</Link>}
+          </div>) : <p className="px-3 py-2 text-sm text-muted-foreground">没有匹配的对象类型</p>}
+      </div>}
+    </div>
+    {!disabled && <p className="text-xs text-muted-foreground">按名称或标识搜索；草稿类型需发布后才能创建实例。</p>}
+  </div>;
+}
 
 export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose, onSaved }: {
   open: boolean; types: ObjectType[]; item: ObjectInstance | null; initialTypeKey?: string;
@@ -41,13 +100,15 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (open) {
-      setTypeKey(item?.typeKey ?? initialTypeKey ?? types[0]?.typeKey ?? '');
+      const published = types.filter((candidate) => candidate.state === 'published');
+      setTypeKey(item?.typeKey ?? published.find((candidate) => candidate.typeKey === initialTypeKey)?.typeKey ??
+        published[0]?.typeKey ?? '');
       setValues(item?.payload ?? {}); setTitle(item?.title ?? ''); setReason(''); setError('');
       if (!dialog.current?.open) dialog.current?.showModal();
     } else if (dialog.current?.open) dialog.current.close();
   }, [open, item, types, initialTypeKey]);
   useEffect(() => {
-    if (!open || !typeKey) return;
+    if (!open || !typeKey) { setType(null); return; }
     void api.get<ObjectType>(`/ontology/types/${encodeURIComponent(typeKey)}`)
       .then(setType).catch((failure: ApiError) => setError(failure.message));
   }, [open, typeKey]);
@@ -89,11 +150,10 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
     <div className="max-h-[90vh] space-y-4 overflow-y-auto p-5 sm:p-6">
       <h2 id="object-editor-title" className="text-lg font-semibold">{item ? '编辑对象实例' : '新建对象实例'}</h2>
       {error && <Alert variant="error">{error}</Alert>}
-      <div><Label htmlFor="object-type">对象类型</Label><Select id="object-type" value={typeKey} disabled={!!item}
-        onChange={(event) => { setTypeKey(event.target.value); setValues({}); }}>
-        {types.map((candidate) => <option key={candidate.typeKey} value={candidate.typeKey}>
-          {candidate.displayName} ({candidate.typeKey})</option>)}
-      </Select></div>
+      <ObjectTypePicker types={types} value={typeKey} disabled={!!item}
+        onChange={(selected) => {
+          if (selected !== typeKey) { setTypeKey(selected); setType(null); setValues({}); }
+        }} />
       <div><Label htmlFor="object-title">标题{item ? '' : '（留空则按模型生成）'}</Label>
         <Input id="object-title" value={title} onChange={(event) => setTitle(event.target.value)} /></div>
       {type?.typeKey === typeKey && <div className="grid gap-4 sm:grid-cols-2">
