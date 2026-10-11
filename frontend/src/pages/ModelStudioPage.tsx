@@ -1187,9 +1187,9 @@ function ActionManager({ initialKey, canEdit }: { initialKey: string; canEdit: b
     setSelected(a.actionKey); setForm(a); setParamsText(json(a.paramsSchema)); setWritesText(json(a.writeSet));
     setPolicyText(json(a.approvalPolicy)); setEffectsText(json(a.externalEffects)); setCompensationText(json(a.compensation)); setPreview(null);
   }
-  async function run(label: string, task: () => Promise<unknown>) {
+  async function run(label: string, task: () => Promise<unknown>, refresh = true) {
     setBusy(true); setError(null); setInfo(null);
-    try { await task(); await load(); setInfo(`${label}成功`); }
+    try { await task(); if (refresh) await load(); setInfo(`${label}成功`); }
     catch (e) { setError(message(e)); }
     finally { setBusy(false); }
   }
@@ -1237,7 +1237,7 @@ function ActionManager({ initialKey, canEdit }: { initialKey: string; canEdit: b
           <Label htmlFor="action-preview">验证参数（JSON）</Label><Textarea id="action-preview" rows={3} className="font-mono text-xs" value={previewParams} onChange={(e) => setPreviewParams(e.target.value)} />
           <Button size="sm" variant="outline" disabled={busy} onClick={() => run('验证', async () => {
             const result = await api.post('/actions/validate', { actionKey: selected, params: parseJson(previewParams, '验证参数') }); setPreview(json(result));
-          })}>验证 Action</Button>
+          }, false)}>验证 Action</Button>
           {preview && <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">{preview}</pre>}
         </div>}
       </CardContent></Card>
@@ -1264,9 +1264,9 @@ function RuleManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
   }, [initialKey]);
   useEffect(() => { load().catch((e) => setError(message(e))); }, [load]);
   function choose(r: RuleDef) { setSelected(r.ruleKey); setForm(r); setTestsText(json(r.testCases)); setPreview(null); }
-  async function run(label: string, task: () => Promise<unknown>) {
+  async function run(label: string, task: () => Promise<unknown>, refresh = true) {
     setBusy(true); setError(null); setInfo(null);
-    try { await task(); await load(); setInfo(`${label}成功`); }
+    try { await task(); if (refresh) await load(); setInfo(`${label}成功`); }
     catch (e) { setError(message(e)); }
     finally { setBusy(false); }
   }
@@ -1296,7 +1296,7 @@ function RuleManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
       <div className="space-y-2 border-t border-border pt-4"><JsonField label="试算上下文" value={contextText} onChange={setContextText} rows={3} />
         <Button size="sm" variant="outline" disabled={busy || !form.expression} onClick={() => run('试算', async () => {
           const result = await api.post('/rules/preview', { expression: form.expression, context: parseJson(contextText, '试算上下文') }); setPreview(json(result));
-        })}>试算表达式</Button>
+        }, false)}>试算表达式</Button>
         {preview && <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">{preview}</pre>}
       </div>
     </CardContent></Card>
@@ -1321,9 +1321,9 @@ function FunctionManager({ initialKey, canEdit }: { initialKey: string; canEdit:
   }, [initialKey]);
   useEffect(() => { load().catch((e) => setError(message(e))); }, [load]);
   function choose(f: FunctionDef) { setSelected(f.functionKey); setForm(f); setPreview(null); }
-  async function run(label: string, task: () => Promise<unknown>) {
+  async function run(label: string, task: () => Promise<unknown>, refresh = true) {
     setBusy(true); setError(null); setInfo(null);
-    try { await task(); await load(); setInfo(`${label}成功`); }
+    try { await task(); if (refresh) await load(); setInfo(`${label}成功`); }
     catch (e) { setError(message(e)); }
     finally { setBusy(false); }
   }
@@ -1349,8 +1349,9 @@ function FunctionManager({ initialKey, canEdit }: { initialKey: string; canEdit:
         <JsonField label="试算参数（对象）" value={argsText} onChange={setArgsText} rows={3} />
         <Button size="sm" variant="outline" disabled={busy} onClick={() => run('函数试算', async () => {
           const result = await api.post(`/functions/${encodeURIComponent(selected)}/evaluate`, { args: parseJson(argsText, '试算参数') }); setPreview(json(result));
-        })}>运行试算</Button>
-        {preview && <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">{preview}</pre>}
+        }, false)}>运行试算</Button>
+        {preview && <div role="status" className="space-y-1"><p className="text-sm font-medium">试算结果</p>
+          <pre className="overflow-auto rounded-md bg-muted p-3 text-xs">{preview}</pre></div>}
       </div>}
     </CardContent></Card>
   </div>;
