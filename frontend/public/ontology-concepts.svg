@@ -1,136 +1,120 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1750" viewBox="0 0 1800 1750" style="max-width:100%;height:auto" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="2100" height="1600" viewBox="0 0 2100 1600" style="max-width:100%;height:auto" role="img" aria-labelledby="title description">
   <title id="title">OODA 本体模型概念关系图</title>
-  <desc id="description">按定义、计算读取、规则执行、关系连接、证据追溯和决策案例六条路径展示本体概念。同一概念会在不同路径中重复出现。关系类型约束两端对象类型、基数与是否允许自环，自环默认禁止。计算属性将普通属性映射到函数参数，在读取对象时计算，不写入实例。</desc>
+  <desc id="description">每种概念只出现一次。定义关系连接 Interface、共享属性、对象类型、普通属性、只读计算属性、关系类型和决策类型；逻辑关系连接函数、规则、自动化与 Action；对象实例汇合计算结果与执行效果，再关联关系实例、证据和决策案例。关系类型约束基数与自环许可，自环默认禁止；计算结果在读取时产生，不写入实例。</desc>
   <defs>
-    <linearGradient id="background" x2="1" y2="1"><stop stop-color="#f8fbff"/><stop offset="1" stop-color="#eef4ff"/></linearGradient>
-    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#647b9d" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
-    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#2862db" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <linearGradient id="background" x2="1" y2="1"><stop stop-color="#f9fbff"/><stop offset="1" stop-color="#f0f5ff"/></linearGradient>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#5579c5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="arrow-compute" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#245fe0" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#16866c" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#b2762c" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <style>
       text { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; fill: #172b4d; }
       .title { font-size: 36px; font-weight: 750; }
       .subtitle { font-size: 17px; fill: #526580; }
       .section-title { font-size: 22px; font-weight: 700; }
-      .card-title { font-size: 21px; font-weight: 700; }
-      .card-sub { font-size: 14px; fill: #526580; }
-      .edge { fill: none; stroke: #647b9d; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; marker-end: url(#arrow); }
-      .edge-blue { stroke: #2862db; stroke-width: 3.2; marker-end: url(#arrow-blue); }
-      .edge-label { font-size: 14px; font-weight: 700; fill: #334b70; }
-      .hint { font-size: 14px; fill: #526580; }
+      .node-title { font-size: 21px; font-weight: 700; }
+      .node-sub { font-size: 14px; fill: #526580; }
+      .node rect { fill: #fff; stroke-width: 1.8; }
+      .node-def rect { stroke: #a9c3f3; }
+      .node-logic rect { stroke: #a7d8c8; }
+      .node-runtime rect { stroke: #e8c793; }
+      .node-compute rect { stroke: #3c72e2; stroke-width: 2.2; }
+      .edge { fill: none; stroke-width: 2.7; stroke-linecap: round; stroke-linejoin: round; }
+      .edge-def { stroke: #5579c5; marker-end: url(#arrow-blue); }
+      .edge-compute { stroke: #245fe0; stroke-width: 3.3; marker-end: url(#arrow-compute); }
+      .edge-logic { stroke: #16866c; marker-end: url(#arrow-green); }
+      .edge-runtime { stroke: #b2762c; marker-end: url(#arrow-amber); }
+      .edge-label { font-size: 14px; font-weight: 700; fill: #344b6e; }
+      .note { font-size: 14px; fill: #526580; }
     </style>
   </defs>
 
-  <rect width="1800" height="1750" fill="url(#background)"/>
-  <text class="title" x="64" y="65">OODA 本体模型 · 概念关系</text>
-  <text class="subtitle" x="66" y="101">沿箭头阅读每条业务路径；蓝线表示只读计算属性的读取过程。</text>
-  <text class="hint" x="66" y="128">同一概念在不同路径中重复出现，便于独立理解每组关系。</text>
+  <rect width="2100" height="1600" fill="url(#background)"/>
+  <text class="title" x="62" y="68">OODA 本体模型 · 概念关系</text>
+  <text class="subtitle" x="64" y="105">每种概念只出现一次；箭头表示定义、调用或实例化关系，蓝色强调只读计算路径。</text>
+  <circle cx="1510" cy="94" r="7" fill="#5579c5"/><text class="note" x="1526" y="100">定义</text>
+  <circle cx="1610" cy="94" r="7" fill="#16866c"/><text class="note" x="1626" y="100">逻辑</text>
+  <circle cx="1710" cy="94" r="7" fill="#b2762c"/><text class="note" x="1726" y="100">运行</text>
+  <circle cx="1810" cy="94" r="7" fill="#245fe0"/><text class="note" x="1826" y="100">计算读取</text>
 
-  <!-- 每组关系独立排布，避免跨区连线穿过卡片。 -->
-  <rect x="48" y="155" width="1704" height="300" rx="22" fill="#eaf1ff" stroke="#d6e3fd"/>
-  <rect x="48" y="475" width="1704" height="250" rx="22" fill="#e8f1ff" stroke="#d4e2ff"/>
-  <rect x="48" y="745" width="1704" height="225" rx="22" fill="#eaf9f5" stroke="#d3ece4"/>
-  <rect x="48" y="990" width="1704" height="205" rx="22" fill="#fff5e8" stroke="#f5e5cf"/>
-  <rect x="48" y="1215" width="1704" height="170" rx="22" fill="#fff5e8" stroke="#f5e5cf"/>
-  <rect x="48" y="1405" width="1704" height="275" rx="22" fill="#fff5e8" stroke="#f5e5cf"/>
-  <text class="section-title" x="76" y="191" fill="#1d4ed8">01  定义类型与属性</text>
-  <text class="section-title" x="76" y="511" fill="#1d4ed8">02  读取时计算属性</text>
-  <text class="section-title" x="76" y="781" fill="#08775c">03  规则触发与执行</text>
-  <text class="section-title" x="76" y="1026" fill="#a66512">04  关系实例</text>
-  <text class="section-title" x="76" y="1251" fill="#a66512">05  证据追溯</text>
-  <text class="section-title" x="76" y="1441" fill="#a66512">06  决策案例</text>
+  <rect x="48" y="170" width="2004" height="730" rx="24" fill="#f5f8ff" stroke="#dce6f9"/>
+  <rect x="48" y="1040" width="2004" height="500" rx="24" fill="#fff8ed" stroke="#f1e4ce"/>
+  <text class="section-title" x="77" y="214">建模、计算与执行</text>
+  <text class="section-title" x="77" y="1082">运行实例与决策</text>
 
-  <!-- 先绘制连线，再绘制卡片，使箭头停在卡片边缘。 -->
+  <!-- 连线位于节点下层。每条边标明起点与终点，便于核对关系。 -->
   <g>
-    <path class="edge" d="M310 357 H415"/><text class="edge-label" x="321" y="343">实现契约</text>
-    <path class="edge" d="M675 357 H790"/><text class="edge-label" x="693" y="343">定义属性</text>
-    <path class="edge" d="M927 283 V310"/><text class="edge-label" x="947" y="303">引用定义</text>
-    <path class="edge" d="M1065 357 H1360"/><text class="edge-label" x="1173" y="343">作为输入</text>
+    <path class="edge edge-def" data-from="shared-property" data-to="property" d="M340 405 H410"/><text class="edge-label" x="360" y="391">引用</text>
+    <path class="edge edge-def" data-from="property" data-to="computed-property" d="M680 405 H850"/><text class="edge-label" x="724" y="391">作为输入</text>
+    <path class="edge edge-compute" data-from="function" data-to="computed-property" d="M1320 355 V295 H990 V355"/><text class="edge-label" x="1100" y="281">函数求值</text>
+    <path class="edge edge-logic" data-from="function" data-to="rule" d="M1450 405 H1510"/><text class="edge-label" x="1464" y="391">调用</text>
+    <path class="edge edge-logic" data-from="rule" data-to="automation" d="M1750 405 H1810"/><text class="edge-label" x="1766" y="391">触发</text>
+    <path class="edge edge-logic" data-from="automation" data-to="action" d="M1930 455 V735"/><text class="edge-label" x="1950" y="606">执行动作</text>
 
-    <path class="edge edge-blue" d="M370 639 H590"/><text class="edge-label" x="429" y="625">函数求值</text>
-    <path class="edge edge-blue" d="M920 639 H1310"/><text class="edge-label" x="1031" y="625">读取时附加结果</text>
-    <path class="edge" d="M1510 569 V595"/><text class="edge-label" x="1530" y="585">实例化</text>
+    <path class="edge edge-def" data-from="interface" data-to="object-type" d="M340 785 H410"/><text class="edge-label" x="360" y="771">实现</text>
+    <path class="edge edge-def" data-from="object-type" data-to="property" d="M545 735 V455"/><text class="edge-label" x="565" y="606">定义属性</text>
+    <path class="edge edge-def" data-from="object-type" data-to="object-instance" d="M680 785 H850"/><text class="edge-label" x="737" y="771">实例化</text>
+    <path class="edge edge-compute" data-from="computed-property" data-to="object-instance" d="M990 455 V735"/><text class="edge-label" x="1011" y="606">读取时附加结果</text>
+    <path class="edge edge-logic" data-from="action" data-to="object-instance" d="M1810 785 H1130"/><text class="edge-label" x="1430" y="771">修改实例</text>
 
-    <path class="edge" d="M335 875 H410"/><text class="edge-label" x="352" y="861">调用</text>
-    <path class="edge" d="M665 875 H735"/><text class="edge-label" x="667" y="861">触发条件</text>
-    <path class="edge" d="M1000 875 H1070"/><text class="edge-label" x="1004" y="861">执行动作</text>
-    <path class="edge" d="M1335 875 H1405"/><text class="edge-label" x="1337" y="861">修改实例</text>
-
-    <path class="edge" d="M430 1105 H725"/><text class="edge-label" x="526" y="1090">约束连接</text>
-    <path class="edge" d="M1370 1105 H1075"/><text class="edge-label" x="1171" y="1090">参与连接</text>
-
-    <path class="edge" d="M550 1320 H1250"/><text class="edge-label" x="828" y="1305">附着证据</text>
-
-    <path class="edge" d="M420 1516 H1190"/><text class="edge-label" x="750" y="1501">定义流程</text>
-    <path class="edge" d="M420 1611 H1110 V1585 H1190"/><text class="edge-label" x="734" y="1597">作为决策上下文</text>
+    <path class="edge edge-def" data-from="link-type" data-to="link-instance" d="M340 1180 H410"/><text class="edge-label" x="360" y="1166">约束</text>
+    <path class="edge edge-runtime" data-from="object-instance" data-to="link-instance" d="M900 835 V980 H720 V1180 H680"/><text class="edge-label" x="750" y="966">参与连接</text>
+    <path class="edge edge-runtime" data-from="object-instance" data-to="evidence" d="M1080 835 V1000 H1355 V1130"/><text class="edge-label" x="1181" y="986">附着证据</text>
+    <path class="edge edge-runtime" data-from="object-instance" data-to="decision-case" d="M990 835 V1410"/><text class="edge-label" x="1012" y="1337">作为决策上下文</text>
+    <path class="edge edge-def" data-from="decision-type" data-to="decision-case" d="M680 1460 H850"/><text class="edge-label" x="734" y="1446">定义流程</text>
   </g>
 
-  <!-- 定义路径 -->
-  <g fill="#fff" stroke="#b6ccf7" stroke-width="1.5">
-    <rect x="80" y="310" width="230" height="94" rx="14"/>
-    <rect x="415" y="310" width="260" height="94" rx="14"/>
-    <rect x="790" y="310" width="275" height="94" rx="14"/>
-    <rect x="790" y="215" width="275" height="68" rx="14"/>
-    <rect x="1360" y="310" width="350" height="94" rx="14" stroke="#3f75df" stroke-width="2"/>
+  <!-- 定义层：每个概念对应一个节点。 -->
+  <g id="node-shared-property" class="node node-def" transform="translate(70 355)">
+    <rect width="270" height="100" rx="15"/><text class="node-title" x="20" y="41">共享属性</text><text class="node-sub" x="20" y="72">可被多个类型引用的定义</text>
   </g>
-  <text class="card-title" x="100" y="348">Interface</text><text class="card-sub" x="100" y="378">类型必须满足的属性契约</text>
-  <text class="card-title" x="435" y="348">对象类型</text><text class="card-sub" x="435" y="378">属性集合、分类与实现的接口</text>
-  <text class="card-title" x="810" y="348">普通属性</text><text class="card-sub" x="810" y="378">实例中存储的原始业务值</text>
-  <text class="card-title" x="810" y="259">共享属性</text>
-  <text class="card-title" x="1380" y="348">只读计算属性</text><text class="card-sub" x="1380" y="378">输入属性 → 函数 → 输出类型</text>
-
-  <!-- 计算读取路径 -->
-  <g fill="#fff" stroke="#b6ccf7" stroke-width="1.5">
-    <rect x="80" y="595" width="290" height="88" rx="14"/>
-    <rect x="590" y="595" width="330" height="88" rx="14" stroke="#3f75df" stroke-width="2"/>
-    <rect x="1360" y="505" width="300" height="64" rx="14"/>
-    <rect x="1310" y="595" width="400" height="88" rx="14"/>
+  <g id="node-property" class="node node-def" transform="translate(410 355)">
+    <rect width="270" height="100" rx="15"/><text class="node-title" x="20" y="41">普通属性</text><text class="node-sub" x="20" y="72">实例中存储的原始业务值</text>
   </g>
-  <text class="card-title" x="101" y="631">函数 Function</text><text class="card-sub" x="101" y="659">可复用的表达式计算</text>
-  <text class="card-title" x="611" y="631">只读计算属性</text><text class="card-sub" x="611" y="659">读取时求值，不写入实例</text>
-  <text class="card-title" x="1380" y="546">对象类型</text>
-  <text class="card-title" x="1331" y="631">对象实例</text><text class="card-sub" x="1331" y="659">保存普通属性；显示计算结果</text>
-
-  <!-- 规则执行路径 -->
-  <g fill="#fff" stroke="#b5ded1" stroke-width="1.5">
-    <rect x="80" y="830" width="255" height="90" rx="14"/>
-    <rect x="410" y="830" width="255" height="90" rx="14"/>
-    <rect x="735" y="830" width="265" height="90" rx="14"/>
-    <rect x="1070" y="830" width="265" height="90" rx="14"/>
-    <rect x="1405" y="830" width="305" height="90" rx="14"/>
+  <g id="node-computed-property" class="node node-compute" transform="translate(850 355)">
+    <rect width="280" height="100" rx="15"/><text class="node-title" x="20" y="41">只读计算属性</text><text class="node-sub" x="20" y="72">输入属性 → 函数 → 输出类型</text>
   </g>
-  <text class="card-title" x="100" y="866">函数 Function</text><text class="card-sub" x="100" y="895">可复用的表达式计算</text>
-  <text class="card-title" x="430" y="866">规则 Rule</text><text class="card-sub" x="430" y="895">指标、约束、触发与评分</text>
-  <text class="card-title" x="755" y="866">自动化</text><text class="card-sub" x="755" y="895">监听变化并评估条件</text>
-  <text class="card-title" x="1090" y="866">Action</text><text class="card-sub" x="1090" y="895">校验并执行受控效果</text>
-  <text class="card-title" x="1425" y="866">对象实例</text><text class="card-sub" x="1425" y="895">写入后的业务数据</text>
-
-  <!-- 关系实例路径 -->
-  <g fill="#fff" stroke="#edce9d" stroke-width="1.5">
-    <rect x="80" y="1060" width="350" height="90" rx="14"/>
-    <rect x="725" y="1060" width="350" height="90" rx="14"/>
-    <rect x="1370" y="1060" width="350" height="90" rx="14"/>
+  <g id="node-interface" class="node node-def" transform="translate(70 735)">
+    <rect width="270" height="100" rx="15"/><text class="node-title" x="20" y="41">Interface</text><text class="node-sub" x="20" y="72">类型必须满足的属性契约</text>
   </g>
-  <text class="card-title" x="102" y="1096">关系 Link 类型</text><text class="card-sub" x="102" y="1125">约束两端类型、基数与自环许可</text>
-  <text class="card-title" x="747" y="1096">关系实例</text><text class="card-sub" x="747" y="1125">连接两个实例；自环默认禁止</text>
-  <text class="card-title" x="1392" y="1096">对象实例</text><text class="card-sub" x="1392" y="1125">作为关系的一端或两端</text>
-
-  <!-- 证据路径 -->
-  <g fill="#fff" stroke="#edce9d" stroke-width="1.5">
-    <rect x="170" y="1280" width="380" height="80" rx="14"/>
-    <rect x="1250" y="1280" width="380" height="80" rx="14"/>
+  <g id="node-object-type" class="node node-def" transform="translate(410 735)">
+    <rect width="270" height="100" rx="15"/><text class="node-title" x="20" y="41">对象类型</text><text class="node-sub" x="20" y="72">属性集合、分类与实现的接口</text>
   </g>
-  <text class="card-title" x="192" y="1314">对象实例</text><text class="card-sub" x="192" y="1342">可关联事实来源</text>
-  <text class="card-title" x="1272" y="1314">证据 / 来源记录</text><text class="card-sub" x="1272" y="1342">支撑对象事实与追溯</text>
-
-  <!-- 决策路径 -->
-  <g fill="#fff" stroke="#edce9d" stroke-width="1.5">
-    <rect x="90" y="1480" width="330" height="72" rx="14"/>
-    <rect x="90" y="1575" width="330" height="72" rx="14"/>
-    <rect x="1190" y="1490" width="450" height="110" rx="14"/>
+  <g id="node-link-type" class="node node-def" transform="translate(70 1130)">
+    <rect width="270" height="100" rx="15"/><text class="node-title" x="20" y="41">关系 Link 类型</text><text class="node-sub" x="20" y="72">约束两端类型、基数与自环许可</text>
   </g>
-  <text class="card-title" x="112" y="1524">决策类型</text>
-  <text class="card-title" x="112" y="1619">对象实例</text>
-  <text class="card-title" x="1212" y="1532">决策案例</text><text class="card-sub" x="1212" y="1565">基于对象上下文形成决策记录</text>
+  <g id="node-decision-type" class="node node-def" transform="translate(410 1410)">
+    <rect width="270" height="100" rx="15"/><text class="node-title" x="20" y="41">决策类型</text><text class="node-sub" x="20" y="72">定义案例的目标、准则与约束</text>
+  </g>
 
-  <rect x="56" y="1699" width="1688" height="34" rx="9" fill="#e4ecfa"/>
-  <text x="78" y="1722" font-size="14" fill="#415675">计算示例：出生日期 → 周岁函数（按业务时区取今天）→ 年龄；结果不入库，下次读取重新计算。</text>
+  <!-- 逻辑层 -->
+  <g id="node-function" class="node node-logic" transform="translate(1190 355)">
+    <rect width="260" height="100" rx="15"/><text class="node-title" x="20" y="41">函数 Function</text><text class="node-sub" x="20" y="72">可复用的表达式计算</text>
+  </g>
+  <g id="node-rule" class="node node-logic" transform="translate(1510 355)">
+    <rect width="240" height="100" rx="15"/><text class="node-title" x="20" y="41">规则 Rule</text><text class="node-sub" x="20" y="72">指标、约束、触发与评分</text>
+  </g>
+  <g id="node-automation" class="node node-logic" transform="translate(1810 355)">
+    <rect width="240" height="100" rx="15"/><text class="node-title" x="20" y="41">自动化</text><text class="node-sub" x="20" y="72">监听变化并评估条件</text>
+  </g>
+  <g id="node-action" class="node node-logic" transform="translate(1810 735)">
+    <rect width="240" height="100" rx="15"/><text class="node-title" x="20" y="41">Action</text><text class="node-sub" x="20" y="72">校验并执行受控效果</text>
+  </g>
+
+  <!-- 运行层 -->
+  <g id="node-object-instance" class="node node-runtime" transform="translate(850 735)">
+    <rect width="280" height="100" rx="15"/><text class="node-title" x="20" y="41">对象实例</text><text class="node-sub" x="20" y="72">保存属性；读取时显示计算值</text>
+  </g>
+  <g id="node-link-instance" class="node node-runtime" transform="translate(410 1130)">
+    <rect width="270" height="100" rx="15"/><text class="node-title" x="20" y="41">关系实例</text><text class="node-sub" x="20" y="72">连接两个实例；自环默认禁止</text>
+  </g>
+  <g id="node-evidence" class="node node-runtime" transform="translate(1190 1130)">
+    <rect width="330" height="100" rx="15"/><text class="node-title" x="20" y="41">证据 / 来源记录</text><text class="node-sub" x="20" y="72">支撑对象事实与追溯</text>
+  </g>
+  <g id="node-decision-case" class="node node-runtime" transform="translate(850 1410)">
+    <rect width="320" height="100" rx="15"/><text class="node-title" x="20" y="41">决策案例</text><text class="node-sub" x="20" y="72">基于对象上下文形成决策记录</text>
+  </g>
+
+  <rect x="54" y="1554" width="1992" height="30" rx="8" fill="#e5ecf8"/>
+  <text class="note" x="76" y="1575">示例：出生日期 → 周岁函数（按业务时区取今天）→ 年龄；计算结果不入库，下次读取重新计算。</text>
 </svg>
