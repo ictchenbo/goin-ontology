@@ -1,7 +1,7 @@
 /**
  * 鉴权上下文：登录态管理、角色判断
  */
-import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, getStoredUser, getToken, setStoredUser, setToken } from './api';
 
 export interface AuthUser {
@@ -29,9 +29,29 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => getStoredUser<AuthUser>());
+  const [user, setUser] = useState<AuthUser | null>(() => getToken() ? getStoredUser<AuthUser>() : null);
   const [token, setTok] = useState<string | null>(() => getToken());
-  const [loading] = useState(false);
+  const [loading, setLoading] = useState(() => Boolean(getToken()));
+
+  useEffect(() => {
+    if (!token) return;
+    let active = true;
+    void api.get<{ user: AuthUser }>('/auth/me').then(({ user: current }) => {
+      if (!active) return;
+      setStoredUser(current);
+      setUser(current);
+    }).catch((error: { code?: string }) => {
+      if (!active) return;
+      if (error.code !== 'UNAUTHORIZED') return;
+      setToken(null);
+      setStoredUser(null);
+      setTok(null);
+      setUser(null);
+    }).finally(() => {
+      if (active) setLoading(false);
+    });
+    return () => { active = false; };
+  }, [token]);
 
   const login = useCallback(async (username: string, password: string) => {
     const result = await api.post<LoginResult>('/auth/login', { username, password });

@@ -182,7 +182,7 @@ function seedScenarioPack(packKey: string, actor: AuthUser): Record<string, stri
   return { objectIds };
 }
 
-function seedSampleCase(packKey: string, actor: AuthUser, analyst: AuthUser, objectIds: string[]) {
+function seedSampleCase(packKey: string, analyst: AuthUser, objectIds: string[]) {
   const pack = scenarioPacks.find((p) => p.key === packKey);
   if (!pack?.sampleCase) return null;
   const db = getDb();
@@ -260,7 +260,8 @@ export function seedAll() {
   for (const pack of scenarioPacks) {
     console.log(`[seed] 场景: ${pack.name}`);
     const { objectIds } = seedScenarioPack(pack.key, admin);
-    const caseId = seedSampleCase(pack.key, admin, analyst, objectIds);
+    const caseActor = pack.key === 'military' ? byName.intel : analyst;
+    const caseId = seedSampleCase(pack.key, caseActor, objectIds);
     if (caseId) console.log(`[seed]  样例案例: ${caseId}`);
   }
 

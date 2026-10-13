@@ -85,6 +85,17 @@ test('案例标题拒绝编码替换字符', async () => {
   assert.match(response.data.error.message, /UTF-8/);
 });
 
+test('演训样例快照包含指令所需的行动方案对象', () => {
+  const { getDb } = require('../src/db/database');
+  const sample = getDb().prepare(`SELECT id, owner FROM decision_case
+    WHERE decision_type_key = 'mil_threat_response' ORDER BY created_at LIMIT 1`).get() as any;
+  assert.equal(sample.owner, 'intel');
+  const related = getDb().prepare(`SELECT COUNT(*) AS count FROM case_object co
+    JOIN object_instance oi ON oi.object_id = co.object_id
+    WHERE co.case_id = ? AND oi.type_key = 'CourseOfAction'`).get(sample.id) as any;
+  assert.equal(related.count, 3);
+});
+
 test('Webhook 重试幂等与受控附件下载', async () => {
   process.env.WEBHOOK_SOURCES_JSON = JSON.stringify({ acceptance: {
     secret: 'source-secret', mapping: {
@@ -394,4 +405,31 @@ test('供应链案例从事实到结果并可回放', async () => {
   assert.ok(replay.data.snapshots?.length);
   assert.ok(replay.data.case.actionRuns?.length);
   assert.ok(replay.data.case.outcomes?.length);
+});
+
+test('已签发令牌使用当前权限，停用账号立即失效', async () => {
+  const created = await request('POST', '/users', 'admin', {
+    username: 'auth-change-test', displayName: '权限变更测试', password: 'test-password-123',
+    roles: ['admin'], securityClearance: 'TOP_SECRET',
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const loginResult = await request('POST', '/auth/login', undefined, {
+    username: 'auth-change-test', password: 'test-password-123',
+  });
+  assert.equal(loginResult.status, 200);
+  const authRequest = (url: string) => fetch(`${base}/api${url}`, {
+    headers: { Authorization: `Bearer ${loginResult.data.token}` },
+  });
+  assert.equal((await authRequest('/users')).status, 200);
+
+  const { getDb } = require('../src/db/database');
+  getDb().prepare('UPDATE users SET roles = ?, security_clearance = ? WHERE id = ?')
+    .run('["observer"]', 'PUBLIC', created.data.id);
+  const current = await (await authRequest('/auth/me')).json() as any;
+  assert.deepEqual(current.user.roles, ['observer']);
+  assert.equal(current.user.securityClearance, 'PUBLIC');
+  assert.equal((await authRequest('/users')).status, 403);
+
+  getDb().prepare('UPDATE users SET disabled = 1 WHERE id = ?').run(created.data.id);
+  assert.equal((await authRequest('/auth/me')).status, 401);
 });

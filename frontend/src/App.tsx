@@ -18,8 +18,9 @@ import { AuditPage } from './pages/AuditPage';
 
 /** 受保护路由包装 */
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
   const location = useLocation();
+  if (loading) return <div role="status" className="p-6">正在验证登录状态…</div>;
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }

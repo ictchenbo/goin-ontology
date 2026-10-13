@@ -60,7 +60,7 @@ SCENARIOS = [
         'users': {
             'propose': ('intel', 'intel123'),
             'approve': ('commander', 'commander123'),
-            'execute': ('operator', 'operator123'),
+            'execute': ('commander', 'commander123'),
         },
     },
     {
@@ -155,10 +155,19 @@ for sc in SCENARIOS:
     })
     check(tag + ' execute', st < 300, 'st=' + str(st) + ' ' + str(ex.get('error', ex.get('message', '')))[:120])
 
+    # 结果必须引用本案例对象上的证据。
+    root_id = detail.get('rootObjectId')
+    st, root_object = req('GET', '/objects/' + root_id, tp) if root_id else (0, {})
+    evidence_ids = [item['id'] for item in root_object.get('evidence', []) if item.get('id')]
+    check(tag + ' outcome evidence', st == 200 and bool(evidence_ids),
+          'st=' + str(st) + ' n=' + str(len(evidence_ids)))
+
     # 结果记录
     st, out = req('POST', '/cases/' + cid + '/outcomes', te, {
         'expected': {'service': 80, 'cost': 12000},
         'actual': {'service': 75, 'cost': 12500},
+        'units': {'service': 'score', 'cost': 'score'},
+        'evidenceRefs': evidence_ids[:1],
         'notes': 'E2E 接近预期',
         'reviewNotes': 'E2E 复盘：偏差在可接受范围',
     })

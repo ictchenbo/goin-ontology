@@ -20,7 +20,7 @@ const NAV_ITEMS = [
   { to: '/cases', label: '决策工作台', icon: ClipboardList, roles: null },
   { to: '/approvals', label: '审批中心', icon: CheckSquare, roles: ['approver', 'commander', 'admin'] },
   { to: '/actions', label: '动作执行', icon: Rocket, roles: ['operator', 'admin', 'commander'] },
-  { to: '/ingest', label: '数据导入', icon: Upload, roles: ['analyst', 'intel', 'admin'] },
+  { to: '/ingest', label: '数据导入', icon: Upload, roles: ['analyst', 'intelligence', 'admin'] },
   { to: '/audit', label: '审计日志', icon: Shield, roles: ['admin', 'safety_officer'] },
 ];
 

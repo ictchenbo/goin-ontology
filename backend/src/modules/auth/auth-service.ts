@@ -55,13 +55,11 @@ export function login(username: string, password: string): { token: string; user
 export function verifyToken(token: string): AuthUser {
   try {
     const payload = jwt.verify(token, JWT_SECRET) as JwtPayload;
-    return {
-      id: payload.sub,
-      username: payload.username,
-      displayName: payload.username,
-      roles: payload.roles ?? [],
-      securityClearance: payload.clearance ?? 'PUBLIC',
-    };
+    if (!payload.sub || !payload.username) throw new Error('令牌缺少用户身份');
+    const row = getDb().prepare('SELECT * FROM users WHERE id = ? AND username = ? AND disabled = 0')
+      .get(payload.sub, payload.username);
+    if (!row) throw new Error('用户已停用或不存在');
+    return mapUser(row);
   } catch {
     throw new AppError('UNAUTHORIZED', '登录凭证无效或已过期');
   }
