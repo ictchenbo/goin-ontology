@@ -1,4 +1,4 @@
-/** 对象实例列表：搜索、分页、创建与简单标题修改。 */
+/** 对象实例列表：搜索、分页、创建、改标题与删除。 */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
@@ -69,6 +69,8 @@ export function ObjectsPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [renaming, setRenaming] = useState<ObjectRow | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { setDraft(query); }, [query]);
@@ -111,9 +113,21 @@ export function ObjectsPage() {
     if (next === query && page === 1) void load();
     else updateFilters({ q: next, page: '' });
   }
+  async function deleteObject(item: ObjectRow) {
+    if (!window.confirm(`删除对象“${item.title || item.objectId}”？对象将从列表中隐藏，关联会失效，历史记录会保留。`)) return;
+    setDeletingId(item.objectId); setError(null); setInfo(null);
+    try {
+      await api.delete(`/objects/${encodeURIComponent(item.objectId)}`, { reason: '在对象列表删除' });
+      setInfo(`对象“${item.title || item.objectId}”已删除`);
+      if (page > 1 && items.length === 1) updateFilters({ page: String(page - 1) });
+      else await load();
+    } catch (failure) { setError((failure as ApiError).message || '删除对象失败'); }
+    finally { setDeletingId(null); }
+  }
   const pages = Math.max(1, Math.ceil(total / pageSize));
   const detailState = { listSearch: location.search };
   const canEdit = hasRole('admin', 'analyst', 'operator');
+  const canDelete = hasRole('admin');
 
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -122,6 +136,7 @@ export function ObjectsPage() {
       {canEdit && <Button onClick={() => void openEditor()}>新建对象</Button>}
     </div>
     {error && <Alert variant="error">{error}</Alert>}
+    {info && <Alert variant="success">{info}</Alert>}
     <Card><CardContent className="space-y-4 pt-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex w-full max-w-2xl flex-wrap items-end gap-3">
@@ -155,6 +170,11 @@ export function ObjectsPage() {
           <TD><div className="flex flex-wrap gap-1">
             <Button size="sm" variant="outline" onClick={() => navigate(`/objects/${encodeURIComponent(object.objectId)}`, { state: detailState })}>详情</Button>
             {canEdit && <Button size="sm" variant="ghost" onClick={() => setRenaming(object)}>改标题</Button>}
+            {canDelete && <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+              disabled={deletingId !== null} onClick={() => void deleteObject(object)}
+              aria-label={`删除对象 ${object.title || object.objectId}`}>
+              {deletingId === object.objectId ? '删除中…' : '删除'}
+            </Button>}
           </div></TD>
         </TR>;
       }) : <TR><TD colSpan={5} className="py-8 text-center text-muted-foreground">{loading ? '加载中…' : '没有匹配的对象'}</TD></TR>}</TBody></Table></div>
