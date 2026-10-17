@@ -3,6 +3,7 @@ import { getDb, nowIso } from '../../db/database';
 import { AppError } from '../../shared/errors';
 import { evaluate, evaluateBoolean, expressionDependencies } from '../../shared/rule-dsl';
 import { writeAudit } from '../audit/audit-service';
+import { currentDomainId } from '../domains/domain-service';
 
 export type RuleKind = 'derived_metric' | 'constraint' | 'trigger' | 'score_normalizer';
 
@@ -48,7 +49,8 @@ export function upsertRule(input: RuleDef, actor: string) {
         `测试样例不符: 表达式=${input.expression}, 输入=${JSON.stringify(tc.input)}, 期望=${JSON.stringify(tc.expected)}, 实际=${JSON.stringify(actual)}`);
     }
   }
-  const existing = db.prepare('SELECT version FROM rule_def WHERE rule_key = ?').get(input.ruleKey) as any;
+  const existing = db.prepare('SELECT version, domain_id FROM rule_def WHERE rule_key = ?').get(input.ruleKey) as any;
+  if (existing && existing.domain_id !== currentDomainId()) throw new AppError('CONFLICT', '规则标识已被其他领域使用');
   const now = nowIso();
   const version = existing ? existing.version + 1 : 1;
   if (existing) {
@@ -61,11 +63,11 @@ export function upsertRule(input: RuleDef, actor: string) {
     );
   } else {
     db.prepare(`INSERT INTO rule_def
-      (rule_key, name, kind, description, expression, input_deps, output_type, scope_type, version, state, test_cases, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?, 'published', ?,?,?)`).run(
+      (rule_key, name, kind, description, expression, input_deps, output_type, scope_type, version, state, test_cases, created_at, updated_at, domain_id)
+      VALUES (?,?,?,?,?,?,?,?,?, 'published', ?,?,?,?)`).run(
       input.ruleKey, input.name, input.kind, input.description ?? '', input.expression,
       JSON.stringify(deps), input.outputType ?? 'number', input.scopeType ?? '', version,
-      JSON.stringify(input.testCases ?? []), now, now
+      JSON.stringify(input.testCases ?? []), now, now, currentDomainId()
     );
   }
   writeAudit({
@@ -76,15 +78,16 @@ export function upsertRule(input: RuleDef, actor: string) {
 }
 
 export function getRule(ruleKey: string) {
-  const row = getDb().prepare('SELECT * FROM rule_def WHERE rule_key = ?').get(ruleKey) as any;
+  const row = getDb().prepare('SELECT * FROM rule_def WHERE rule_key = ? AND domain_id = ?')
+    .get(ruleKey, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `规则不存在: ${ruleKey}`);
   return mapRule(row);
 }
 
 export function listRules(kind?: string, scopeType?: string) {
   const db = getDb();
-  let sql = 'SELECT * FROM rule_def WHERE 1=1';
-  const params: unknown[] = [];
+  let sql = 'SELECT * FROM rule_def WHERE domain_id = ?';
+  const params: unknown[] = [currentDomainId()];
   if (kind) { sql += ' AND kind = ?'; params.push(kind); }
   if (scopeType) { sql += ' AND scope_type = ?'; params.push(scopeType); }
   sql += ' ORDER BY kind, rule_key';

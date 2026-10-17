@@ -7,6 +7,7 @@ import { AuthUser, requireCaseAccess, requireRole, clearanceAllows, redactFields
 import { getCase, getDecisionTypeForCase } from '../decision/decision-service';
 import { getSnapshot } from '../situation/situation-service';
 import { writeAudit } from '../audit/audit-service';
+import { currentDomainId } from '../domains/domain-service';
 
 const responseSchema = z.object({
   text: z.string().min(1),
@@ -69,9 +70,9 @@ export async function requestSuggestion(caseId: string, kind: SuggestionKind, ac
   db.transaction(() => {
     db.prepare(`INSERT INTO ai_suggestion
       (id, case_id, kind, prompt_version, model_version, input_labels, content_json,
-       status, correction_note, created_at, created_by)
-      VALUES (?,?,?,'v1',?,?,?,'suggestion','',?,?)`).run(id, caseId, kind, content.modelVersion,
-      JSON.stringify(decisionCase.securityLabels), JSON.stringify(content), nowIso(), actor.username);
+       status, correction_note, created_at, created_by, domain_id)
+      VALUES (?,?,?,'v1',?,?,?,'suggestion','',?,?,?)`).run(id, caseId, kind, content.modelVersion,
+      JSON.stringify(decisionCase.securityLabels), JSON.stringify(content), nowIso(), actor.username, currentDomainId());
     db.prepare(`INSERT INTO ai_evaluation
       (id, suggestion_id, checks_json, passed, reviewed_by, created_at) VALUES (?,?,?,?,?,?)`)
       .run(newId('aiev'), id, JSON.stringify(evaluation.checks), evaluation.passed ? 1 : 0, '', nowIso());
@@ -84,7 +85,7 @@ export async function requestSuggestion(caseId: string, kind: SuggestionKind, ac
 
 export function getSuggestion(id: string, actor: AuthUser) {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM ai_suggestion WHERE id = ?').get(id) as any;
+  const row = db.prepare('SELECT * FROM ai_suggestion WHERE id = ? AND domain_id = ?').get(id, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', '建议不存在');
   requireCaseAccess(actor, row.case_id);
   if (!clearanceAllows(actor, JSON.parse(row.input_labels || '["PUBLIC"]'))) {

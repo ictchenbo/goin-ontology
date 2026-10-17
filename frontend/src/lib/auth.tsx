@@ -3,6 +3,7 @@
  */
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, getStoredUser, getToken, setStoredUser, setToken } from './api';
+import { setCurrentDomain } from './domain';
 
 export interface AuthUser {
   id: string;
@@ -55,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (username: string, password: string) => {
     const result = await api.post<LoginResult>('/auth/login', { username, password });
+    setCurrentDomain(null);
     setToken(result.token);
     setStoredUser(result.user);
     setTok(result.token);
@@ -62,6 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    setCurrentDomain(null);
     setToken(null);
     setStoredUser(null);
     setTok(null);

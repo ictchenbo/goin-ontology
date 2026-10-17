@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import { getDb, nowIso } from '../../db/database';
 import { newId } from '../../shared/ids';
 import { AppError } from '../../shared/errors';
+import { currentDomainId } from '../domains/domain-service';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'ontology-ooda-dev-secret-change-me';
 const TOKEN_TTL = '12h';
@@ -177,13 +178,15 @@ export function redactFields(user: AuthUser, payload: Record<string, unknown>, t
 }
 
 export function requireObjectAccess(user: AuthUser, objectId: string): void {
-  const row = getDb().prepare('SELECT security_labels FROM object_instance WHERE object_id = ? AND deleted = 0').get(objectId) as any;
+  const row = getDb().prepare('SELECT security_labels FROM object_instance WHERE object_id = ? AND deleted = 0 AND domain_id = ?')
+    .get(objectId, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `对象不存在: ${objectId}`);
   requireClearance(user, JSON.parse(row.security_labels || '["PUBLIC"]'));
 }
 
 export function requireCaseAccess(user: AuthUser, caseId: string): void {
-  const row = getDb().prepare('SELECT security_labels FROM decision_case WHERE id = ?').get(caseId) as any;
+  const row = getDb().prepare('SELECT security_labels FROM decision_case WHERE id = ? AND domain_id = ?')
+    .get(caseId, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `案例不存在: ${caseId}`);
   requireClearance(user, JSON.parse(row.security_labels || '["PUBLIC"]'));
 }

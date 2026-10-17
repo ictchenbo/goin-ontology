@@ -251,6 +251,10 @@ function seedSampleCase(packKey: string, analyst: AuthUser, objectIds: string[])
 export function seedAll() {
   runMigrations();
   const users = seedUsers();
+  // 新建演示库先迁移后建用户，补齐初始领域的成员关系。
+  const addInitialMember = getDb().prepare(`INSERT OR IGNORE INTO application_domain_member
+    (domain_id, user_id, created_at) VALUES ('dom_existing', ?, ?)`);
+  for (const user of users) addInitialMember.run(user.id, nowIso());
   const byName = Object.fromEntries(users.map((u) => [u.username, u]));
   console.log(`[seed] 用户: ${users.map((u) => u.username).join(', ')}`);
 

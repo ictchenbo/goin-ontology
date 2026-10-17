@@ -28,7 +28,7 @@ export function LoginPage() {
     setLoading(true);
     try {
       await login(username.trim(), password);
-      navigate(from, { replace: true });
+      navigate('/domains/select', { replace: true, state: { from } });
     } catch (err) {
       const apiErr = err as ApiError;
       setError(apiErr?.message || '登录失败，请检查用户名和密码');

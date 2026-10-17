@@ -6,6 +6,7 @@ import { getSnapshot } from '../situation/situation-service';
 import { getScenarioRun } from '../scenario/scenario-service';
 import { getHistory } from '../objects/object-service';
 import { writeAudit } from '../audit/audit-service';
+import { currentDomainId } from '../domains/domain-service';
 
 export function exportCaseReplay(caseId: string, actor: AuthUser) {
   requireRole(actor, ['admin', 'analyst', 'approver']);
@@ -16,12 +17,12 @@ export function exportCaseReplay(caseId: string, actor: AuthUser) {
   const scenarioRows = db.prepare('SELECT id FROM scenario_run WHERE case_id = ? ORDER BY created_at').all(caseId) as any[];
   const scoreRows = db.prepare('SELECT * FROM score_run WHERE case_id = ? ORDER BY created_at').all(caseId) as any[];
   const decisions = db.prepare('SELECT * FROM decision_record WHERE case_id = ? ORDER BY created_at').all(caseId) as any[];
-  const audits = db.prepare(`SELECT * FROM audit_event WHERE
+  const audits = db.prepare(`SELECT * FROM audit_event WHERE domain_id = ? AND (
     (resource_type = 'decision_case' AND resource_id = ?) OR
     (resource_type = 'approval' AND resource_id IN (SELECT id FROM approval WHERE case_id = ?)) OR
     (resource_type = 'action_run' AND resource_id IN (SELECT id FROM action_run WHERE case_id = ?)) OR
-    (resource_type = 'outcome' AND resource_id IN (SELECT id FROM outcome WHERE case_id = ?))
-    ORDER BY created_at`).all(caseId, caseId, caseId, caseId) as any[];
+    (resource_type = 'outcome' AND resource_id IN (SELECT id FROM outcome WHERE case_id = ?)))
+    ORDER BY created_at`).all(currentDomainId(), caseId, caseId, caseId, caseId) as any[];
   const replay = {
     formatVersion: 1,
     exportedAt: nowIso(),

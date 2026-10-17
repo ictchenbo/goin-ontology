@@ -3,6 +3,7 @@ import { getDb, nowIso } from '../../db/database';
 import { newId } from '../../shared/ids';
 import { stableHash } from '../../shared/hash';
 import { AuthUser, clearanceAllows, hasRole, redactFields } from '../auth/auth-service';
+import { currentDomainId } from '../domains/domain-service';
 
 export interface AuditInput {
   actor: string;
@@ -20,8 +21,8 @@ export function writeAudit(input: AuditInput): string {
   const db = getDb();
   const id = newId('aud');
   db.prepare(`INSERT INTO audit_event
-    (id, actor, event_type, resource_type, resource_id, action, before_hash, after_hash, correlation_id, detail_json, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    (id, actor, event_type, resource_type, resource_id, action, before_hash, after_hash, correlation_id, detail_json, created_at, domain_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     id,
     input.actor,
     input.eventType,
@@ -32,7 +33,7 @@ export function writeAudit(input: AuditInput): string {
     input.after === undefined ? '' : stableHash(input.after),
     input.correlationId ?? '',
     JSON.stringify(input.detail ?? {}),
-    nowIso()
+    nowIso(), currentDomainId()
   );
   return id;
 }
@@ -65,8 +66,8 @@ export function canReadAuditResource(user: AuthUser, resourceType: string, resou
 
 export function listAudit(query: AuditQuery, user?: AuthUser) {
   const db = getDb();
-  const where: string[] = [];
-  const params: unknown[] = [];
+  const where: string[] = ['domain_id = ?'];
+  const params: unknown[] = [currentDomainId()];
   if (query.actor) { where.push('actor = ?'); params.push(query.actor); }
   if (query.resourceType) { where.push('resource_type = ?'); params.push(query.resourceType); }
   if (query.resourceId) { where.push('resource_id = ?'); params.push(query.resourceId); }
@@ -113,8 +114,8 @@ export function getAuditChain(resourceType: string, resourceId: string, user?: A
   if (user && !canReadAuditResource(user, resourceType, resourceId)) return [];
   const db = getDb();
   const rows = db.prepare(
-    `SELECT * FROM audit_event WHERE resource_type = ? AND resource_id = ? ORDER BY created_at ASC, rowid ASC`
-  ).all(resourceType, resourceId);
+    `SELECT * FROM audit_event WHERE resource_type = ? AND resource_id = ? AND domain_id = ? ORDER BY created_at ASC, rowid ASC`
+  ).all(resourceType, resourceId, currentDomainId());
   return rows.map((r) => {
     const item = mapAudit(r);
     return user ? { ...item, detail: redactFields(user, item.detail) } : item;

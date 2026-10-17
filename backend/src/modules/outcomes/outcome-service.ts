@@ -5,6 +5,7 @@ import { AppError } from '../../shared/errors';
 import { writeAudit } from '../audit/audit-service';
 import { AuthUser, requireRole, hasRole, clearanceAllows, redactFields } from '../auth/auth-service';
 import { assertTransition, getDecisionTypeForCase } from '../decision/decision-service';
+import { currentDomainId } from '../domains/domain-service';
 
 export interface RecordOutcomeInput {
   caseId: string;
@@ -167,9 +168,10 @@ export function closeCase(caseId: string, actor: AuthUser) {
 
 export function listOutcomes(caseId?: string, user?: AuthUser) {
   const db = getDb();
+  const domainId = currentDomainId();
   const rows = caseId
-    ? db.prepare('SELECT * FROM outcome WHERE case_id = ? ORDER BY created_at DESC').all(caseId) as any[]
-    : db.prepare('SELECT * FROM outcome ORDER BY created_at DESC LIMIT 100').all() as any[];
+    ? db.prepare('SELECT o.* FROM outcome o JOIN decision_case c ON c.id = o.case_id WHERE o.case_id = ? AND c.domain_id = ? ORDER BY o.created_at DESC').all(caseId, domainId) as any[]
+    : db.prepare('SELECT o.* FROM outcome o JOIN decision_case c ON c.id = o.case_id WHERE c.domain_id = ? ORDER BY o.created_at DESC LIMIT 100').all(domainId) as any[];
   return rows.filter((r) => {
     if (!user) return true;
     const c = db.prepare('SELECT security_labels FROM decision_case WHERE id = ?').get(r.case_id) as any;

@@ -6,6 +6,7 @@ import { AppError } from '../../shared/errors';
 import { writeAudit } from '../audit/audit-service';
 import { AuthUser, clearanceAllows, redactFields, mergeLabels } from '../auth/auth-service';
 import { invalidateCasesForObject } from '../decision/staleness-service';
+import { currentDomainId } from '../domains/domain-service';
 
 export interface SourceInput {
   sourceKey: string;
@@ -36,8 +37,12 @@ export function recordSource(input: SourceInput) {
   }
   const hash = sha256(stableStringify(input.raw));
   const existing = db.prepare(
-    'SELECT * FROM source_record WHERE source_key = ? AND external_key = ?'
-  ).get(input.sourceKey, input.externalKey) as any;
+    'SELECT * FROM source_record WHERE source_key = ? AND external_key = ? AND domain_id = ?'
+  ).get(input.sourceKey, input.externalKey, currentDomainId()) as any;
+  if (!existing && db.prepare('SELECT 1 FROM source_record WHERE source_key = ? AND external_key = ?')
+    .get(input.sourceKey, input.externalKey)) {
+    throw new AppError('CONFLICT', '来源技术键已被其他领域使用');
+  }
   if (existing) {
     if (existing.hash === hash) {
       return { id: existing.id, deduplicated: true };
@@ -75,11 +80,11 @@ export function recordSource(input: SourceInput) {
   }
   const id = newId('src');
   db.prepare(`INSERT INTO source_record
-    (id, source_key, external_key, source_type, hash, observed_at, business_at, confidence, security_labels, raw_json, recorded_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
+    (id, source_key, external_key, source_type, hash, observed_at, business_at, confidence, security_labels, raw_json, recorded_at, domain_id)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     id, input.sourceKey, input.externalKey, input.sourceType ?? 'manual', hash,
     input.observedAt, input.businessAt ?? null, input.confidence ?? 1.0,
-    JSON.stringify(input.securityLabels ?? ['PUBLIC']), JSON.stringify(input.raw), nowIso()
+    JSON.stringify(input.securityLabels ?? ['PUBLIC']), JSON.stringify(input.raw), nowIso(), currentDomainId()
   );
   db.prepare(`INSERT INTO source_record_revision
     (id, source_id, revision, hash, raw_json, observed_at, business_at, confidence, security_labels, recorded_at)
@@ -109,9 +114,9 @@ export function attachEvidence(input: {
   actor: string;
 }) {
   const db = getDb();
-  const obj = db.prepare('SELECT object_id, security_labels FROM object_instance WHERE object_id = ?').get(input.objectId) as any;
+  const obj = db.prepare('SELECT object_id, security_labels FROM object_instance WHERE object_id = ? AND domain_id = ?').get(input.objectId, currentDomainId()) as any;
   if (!obj) throw new AppError('NOT_FOUND', `对象不存在: ${input.objectId}`);
-  const src = db.prepare('SELECT id, security_labels, status, expires_at FROM source_record WHERE id = ?').get(input.sourceId) as any;
+  const src = db.prepare('SELECT id, security_labels, status, expires_at FROM source_record WHERE id = ? AND domain_id = ?').get(input.sourceId, currentDomainId()) as any;
   if (!src) throw new AppError('NOT_FOUND', `来源记录不存在: ${input.sourceId}`);
   if (src.status !== 'active' || (src.expires_at && Date.parse(src.expires_at) <= Date.now())) {
     throw new AppError('PRECONDITION_FAILED', '来源记录已纠错或过期');
@@ -124,11 +129,11 @@ export function attachEvidence(input: {
     .get(input.sourceId) as any)?.n ?? 1;
   db.prepare(`INSERT INTO evidence
     (id, object_id, source_id, field_path, claim, observed_at, business_at, confidence,
-     status, created_at, stance, source_revision)
-    VALUES (?,?,?,?,?,?,?,?, 'active', ?, ?, ?)`).run(
+     status, created_at, stance, source_revision, domain_id)
+    VALUES (?,?,?,?,?,?,?,?, 'active', ?, ?, ?, ?)`).run(
     id, input.objectId, input.sourceId, input.fieldPath ?? '', input.claim ?? '',
     input.observedAt, input.businessAt ?? null, input.confidence ?? 1.0,
-    nowIso(), input.stance ?? 'support', sourceRevision
+    nowIso(), input.stance ?? 'support', sourceRevision, currentDomainId()
   );
   const labels = mergeLabels(JSON.parse(obj.security_labels || '["PUBLIC"]'), JSON.parse(src.security_labels || '["PUBLIC"]'));
   db.prepare('UPDATE object_instance SET security_labels = ? WHERE object_id = ?')
@@ -168,7 +173,7 @@ export function correctSource(sourceId: string, actor: string, reason: string) {
 }
 
 export function getSource(sourceId: string, user?: AuthUser) {
-  const row = getDb().prepare('SELECT * FROM source_record WHERE id = ?').get(sourceId) as any;
+  const row = getDb().prepare('SELECT * FROM source_record WHERE id = ? AND domain_id = ?').get(sourceId, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `来源记录不存在: ${sourceId}`);
   const labels = JSON.parse(row.security_labels || '["PUBLIC"]');
   if (user && !clearanceAllows(user, labels)) throw new AppError('FORBIDDEN', '密级不足');
@@ -197,7 +202,7 @@ export function getSource(sourceId: string, user?: AuthUser) {
 
 export function listSources(limit = 50, offset = 0, user?: AuthUser) {
   const db = getDb();
-  const visible = (db.prepare('SELECT * FROM source_record ORDER BY recorded_at DESC').all() as any[])
+  const visible = (db.prepare('SELECT * FROM source_record WHERE domain_id = ? ORDER BY recorded_at DESC').all(currentDomainId()) as any[])
     .filter((r) => !user || clearanceAllows(user, JSON.parse(r.security_labels || '["PUBLIC"]')));
   return { items: visible.slice(offset, offset + limit).map((r) => getSource(r.id, user)), total: visible.length };
 }

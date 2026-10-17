@@ -6,12 +6,13 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Boxes, GitBranch, ClipboardList, CheckSquare,
-  Rocket, Upload, Shield, Moon, Sun, Menu, X, LogOut, Activity
+  Rocket, Upload, Shield, Moon, Sun, Menu, X, LogOut, Activity, Layers3
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { Button } from './ui/Button';
 import { Badge } from './ui/Badge';
+import { getCurrentDomain } from '@/lib/domain';
 
 const NAV_ITEMS = [
   { to: '/', label: '仪表盘', icon: LayoutDashboard, roles: null },
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { to: '/actions', label: '动作执行', icon: Rocket, roles: ['operator', 'admin', 'commander'] },
   { to: '/ingest', label: '数据导入', icon: Upload, roles: ['analyst', 'intelligence', 'admin'] },
   { to: '/audit', label: '审计日志', icon: Shield, roles: ['admin', 'safety_officer'] },
+  { to: '/admin/domains', label: '应用领域', icon: Layers3, roles: ['admin'] },
 ];
 
 export function Layout() {
@@ -112,6 +114,9 @@ export function Layout() {
             <Menu className="h-5 w-5" />
           </button>
           <div className="flex-1" />
+          <Button variant="ghost" size="sm" onClick={() => navigate('/domains/select')}>
+            <Layers3 className="mr-1 h-4 w-4" aria-hidden />{getCurrentDomain()?.displayName ?? '选择领域'}
+          </Button>
           <Button
             variant="ghost"
             size="sm"

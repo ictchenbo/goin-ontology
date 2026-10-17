@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2100" height="1600" viewBox="0 0 2100 1600" style="max-width:100%;height:auto" role="img" aria-labelledby="title description">
   <title id="title">OODA 本体模型概念关系图</title>
-  <desc id="description">每种概念只出现一次。定义关系连接 Interface、共享属性、对象类型、普通属性、只读计算属性、关系类型和决策类型；逻辑关系连接函数、规则、自动化与 Action；对象实例汇合计算结果与执行效果，再关联关系实例、证据和决策案例。关系类型约束基数与自环许可，自环默认禁止；计算结果在读取时产生，不写入实例。</desc>
+  <desc id="description">应用领域隔离本体定义、对象实例及决策数据，用户先选择有权访问的领域。每种概念只出现一次。定义关系连接 Interface、共享属性、对象类型、普通属性、只读计算属性、关系类型和决策类型；逻辑关系连接函数、规则、自动化与 Action；对象实例汇合计算结果与执行效果，再关联关系实例、证据和决策案例。关系类型约束基数与自环许可，自环默认禁止；计算结果在读取时产生，不写入实例。</desc>
   <defs>
     <linearGradient id="background" x2="1" y2="1"><stop stop-color="#f9fbff"/><stop offset="1" stop-color="#f0f5ff"/></linearGradient>
     <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#5579c5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
@@ -32,6 +32,10 @@
   <rect width="2100" height="1600" fill="url(#background)"/>
   <text class="title" x="62" y="68">OODA 本体模型 · 概念关系</text>
   <text class="subtitle" x="64" y="105">每种概念只出现一次；箭头表示定义、调用或实例化关系，蓝色强调只读计算路径。</text>
+  <g id="node-application-domain" class="node node-def">
+    <rect x="64" y="119" width="1170" height="39" rx="12" fill="#fff" stroke="#a9c3f3"/>
+    <text class="node-sub" x="83" y="145">应用领域：管理员创建并授权成员；当前领域自动附加 domain_id，隔离下方定义与运行数据</text>
+  </g>
   <circle cx="1510" cy="94" r="7" fill="#5579c5"/><text class="note" x="1526" y="100">定义</text>
   <circle cx="1610" cy="94" r="7" fill="#16866c"/><text class="note" x="1626" y="100">逻辑</text>
   <circle cx="1710" cy="94" r="7" fill="#b2762c"/><text class="note" x="1726" y="100">运行</text>

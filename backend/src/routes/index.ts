@@ -55,7 +55,9 @@ import { requestSuggestion, listSuggestions, getSuggestion, reviewSuggestion } f
 import { saveAttachment, listAttachments, getAttachment } from '../modules/sources/attachment-service';
 import { ingestWebhook } from '../modules/ingestion/webhook-service';
 import { AppError } from '../shared/errors';
-import { requireAuth, asyncHandler, idempotencyGuard, storeIdempotent } from './middleware';
+import { requireAuth, requireDomain, asyncHandler, idempotencyGuard, storeIdempotent } from './middleware';
+import { listDomains, getDomain, createDomain, updateDomain, listDomainMembers, setDomainMember,
+  assertResourceDomain, assertCaseChildDomain, currentDomainId } from '../modules/domains/domain-service';
 import { getDb } from '../db/database';
 import { evaluate, expressionDependencies } from '../shared/rule-dsl';
 import { requireCaseAccess, requireObjectAccess, requireClearance, clearanceAllows, redactFields } from '../modules/auth/auth-service';
@@ -111,6 +113,86 @@ apiRouter.post('/users', requireAuth, asyncHandler((req, res) => {
   const user = createUser(req.body);
   res.status(201).json(user);
 }));
+
+// ===== 应用领域：选择与管理位于领域工作区之外 =====
+apiRouter.get('/domains', requireAuth, asyncHandler((req, res) => {
+  res.json({ items: listDomains(req.user!, req.query.includeArchived === 'true') });
+}));
+
+apiRouter.post('/domains', requireAuth, asyncHandler((req, res) => {
+  requireRole(req.user!, ['admin']);
+  res.status(201).json(createDomain(req.body, req.user!));
+}));
+
+apiRouter.get('/domains/:domainId', requireAuth, asyncHandler((req, res) => {
+  const domain = getDomain(req.params.domainId);
+  if (!req.user!.roles.includes('admin')) {
+    const allowed = listDomains(req.user!).some((item) => item.id === domain.id);
+    if (!allowed) throw new AppError('FORBIDDEN', '无权访问该应用领域');
+  }
+  res.json(domain);
+}));
+
+apiRouter.patch('/domains/:domainId', requireAuth, asyncHandler((req, res) => {
+  requireRole(req.user!, ['admin']);
+  res.json(updateDomain(req.params.domainId, req.body));
+}));
+
+apiRouter.get('/domains/:domainId/members', requireAuth, asyncHandler((req, res) => {
+  requireRole(req.user!, ['admin']);
+  res.json({ items: listDomainMembers(req.params.domainId) });
+}));
+
+apiRouter.put('/domains/:domainId/members/:userId', requireAuth, asyncHandler((req, res) => {
+  requireRole(req.user!, ['admin']);
+  res.json(setDomainMember(req.params.domainId, req.params.userId, true));
+}));
+
+apiRouter.delete('/domains/:domainId/members/:userId', requireAuth, asyncHandler((req, res) => {
+  requireRole(req.user!, ['admin']);
+  res.json(setDomainMember(req.params.domainId, req.params.userId, false));
+}));
+
+apiRouter.use(requireDomain);
+
+// 所有按 ID 访问的入口先校验资源归属，避免通过猜测 ID 跨领域读取或写入。
+const domainParams: Record<string, [string, string]> = {
+  objectId: ['object_instance', 'object_id'], linkId: ['link_instance', 'id'],
+  linkKey: ['link_def', 'link_key'], interfaceKey: ['interface_def', 'interface_key'],
+  propertyKey: ['shared_property', 'property_key'], functionKey: ['function_def', 'function_key'],
+  ruleKey: ['rule_def', 'rule_key'], actionKey: ['action_type', 'action_key'],
+  sourceId: ['source_record', 'id'], evidenceId: ['evidence', 'id'],
+  jobId: ['ingest_job', 'id'], caseId: ['decision_case', 'id'],
+  attachmentId: ['attachment', 'id'], suggestionId: ['ai_suggestion', 'id'],
+  messageId: ['outbox_message', 'id'],
+};
+for (const [param, [table, column]] of Object.entries(domainParams)) {
+  apiRouter.param(param, (req, _res, next, value) => {
+    try { assertResourceDomain(table, column, String(value)); next(); }
+    catch (error) { next(error); }
+  });
+}
+apiRouter.param('typeKey', (req, _res, next, value) => {
+  try {
+    const table = req.path.startsWith('/decision-types/') ? 'decision_type' : 'ontology_type';
+    assertResourceDomain(table, 'type_key', String(value)); next();
+  } catch (error) { next(error); }
+});
+for (const [param, table] of Object.entries({
+  altId: 'alternative', approvalId: 'approval', outcomeId: 'outcome', snapshotId: 'case_snapshot',
+})) {
+  apiRouter.param(param, (_req, _res, next, value) => {
+    try { assertCaseChildDomain(table, String(value)); next(); }
+    catch (error) { next(error); }
+  });
+}
+apiRouter.param('runId', (req, _res, next, value) => {
+  try {
+    if (req.path.startsWith('/actions/runs/')) assertResourceDomain('action_run', 'id', String(value));
+    else assertCaseChildDomain('scenario_run', String(value));
+    next();
+  } catch (error) { next(error); }
+});
 
 // ===== Ontology =====
 apiRouter.get('/ontology/shared-properties', requireAuth, asyncHandler((_req, res) => {
@@ -890,18 +972,18 @@ apiRouter.post('/ai-suggestions/:suggestionId/review', requireAuth, asyncHandler
 
 apiRouter.get('/dashboard', requireAuth, asyncHandler((req, res) => {
   const db = getDb();
-  const cases = (db.prepare('SELECT id, state, security_labels FROM decision_case').all() as any[])
+  const cases = (db.prepare('SELECT id, state, security_labels FROM decision_case WHERE domain_id = ?').all(currentDomainId()) as any[])
     .filter((c) => clearanceAllows(req.user!, JSON.parse(c.security_labels || '["PUBLIC"]')));
   const caseIds = new Set(cases.map((c) => c.id));
   const caseCount = cases.length;
   const openCases = cases.filter((c) => !['Closed', 'Cancelled'].includes(c.state)).length;
-  const pendingApprovals = (db.prepare("SELECT case_id FROM approval WHERE status = 'pending'").all() as any[])
+  const pendingApprovals = (db.prepare("SELECT a.case_id FROM approval a JOIN decision_case c ON c.id = a.case_id WHERE a.status = 'pending' AND c.domain_id = ?").all(currentDomainId()) as any[])
     .filter((a) => caseIds.has(a.case_id)).length;
-  const failedActions = (db.prepare("SELECT case_id FROM action_run WHERE status = 'failed'").all() as any[])
+  const failedActions = (db.prepare("SELECT case_id FROM action_run WHERE status = 'failed' AND domain_id = ?").all(currentDomainId()) as any[])
     .filter((a) => a.case_id && caseIds.has(a.case_id)).length;
   const pendingOutbox = hasRole(req.user!, ['admin', 'operator'])
-    ? (db.prepare("SELECT COUNT(*) AS c FROM outbox_message WHERE delivery_state IN ('pending','failed')").get() as any).c : 0;
-  const objectCount = (db.prepare('SELECT security_labels FROM object_instance WHERE deleted = 0').all() as any[])
+    ? (db.prepare("SELECT COUNT(*) AS c FROM outbox_message WHERE delivery_state IN ('pending','failed') AND domain_id = ?").get(currentDomainId()) as any).c : 0;
+  const objectCount = (db.prepare('SELECT security_labels FROM object_instance WHERE deleted = 0 AND domain_id = ?').all(currentDomainId()) as any[])
     .filter((o) => clearanceAllows(req.user!, JSON.parse(o.security_labels || '["PUBLIC"]'))).length;
   const stateRows = [...new Set(cases.map((c) => c.state))].map((state) => ({
     state, c: cases.filter((c) => c.state === state).length,

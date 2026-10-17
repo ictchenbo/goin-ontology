@@ -6,12 +6,14 @@ import multer from 'multer';
 import { correlationId } from '../shared/ids';
 import { getDb, nowIso } from '../db/database';
 import { sha256, stableStringify } from '../shared/hash';
+import { assertDomainAccess, getDomain, runInDomain } from '../modules/domains/domain-service';
 
 declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
       correlationId?: string;
+      domainId?: string;
     }
   }
 }
@@ -33,6 +35,25 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction) {
   } catch (e) {
     next(e);
   }
+}
+
+// 领域选择来自请求头，但只有完成用户授权后才能作为工作上下文。
+export function requireDomain(req: Request, _res: Response, next: NextFunction) {
+  const domainId = req.header('x-domain-id') || '';
+  if (!domainId) return next(new AppError('VALIDATION_ERROR', '请先选择应用领域'));
+  try {
+    if (req.path.startsWith('/ingest/webhook/')) {
+      if (getDomain(domainId).status !== 'active') throw new AppError('FORBIDDEN', '应用领域已归档');
+    } else {
+      const header = req.header('authorization') || '';
+      const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+      if (!token) throw new AppError('UNAUTHORIZED', '缺少登录凭证');
+      req.user = verifyToken(token);
+      assertDomainAccess(req.user, domainId);
+    }
+    req.domainId = domainId;
+    runInDomain(domainId, next);
+  } catch (error) { next(error); }
 }
 
 export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
@@ -76,9 +97,13 @@ export function idempotencyGuard(endpoint: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     const key = req.header('idempotency-key') || (req.body && req.body.idempotencyKey);
     if (!key) return next();
-    const requestHash = sha256(stableStringify({ endpoint, actor: req.user?.id, body: req.body }));
+    const requestHash = sha256(stableStringify({ endpoint, domainId: req.domainId, actor: req.user?.id, body: req.body }));
     const db = getDb();
-    const existing = db.prepare('SELECT * FROM idempotency_record WHERE idempotency_key = ?').get(key) as any;
+    const existing = db.prepare('SELECT * FROM idempotency_record WHERE idempotency_key = ? AND domain_id = ?')
+      .get(key, req.domainId) as any;
+    if (!existing && db.prepare('SELECT 1 FROM idempotency_record WHERE idempotency_key = ?').get(key)) {
+      return next(new AppError('CONFLICT', '幂等键已被其他领域使用'));
+    }
     if (existing) {
       if (existing.endpoint !== endpoint || existing.request_hash !== requestHash) {
         return next(new AppError('CONFLICT', '幂等键已用于不同请求'));
@@ -99,9 +124,9 @@ export function storeIdempotent(res: Response, key: string, endpoint: string, st
   const db = getDb();
   try {
     db.prepare(`INSERT OR IGNORE INTO idempotency_record
-      (idempotency_key, endpoint, request_hash, response_json, status_code, created_at)
-      VALUES (?,?,?,?,?,?)`).run(key, endpoint, res.locals.idempotencyRequestHash,
-        JSON.stringify(body), status, nowIso());
+      (idempotency_key, endpoint, request_hash, response_json, status_code, created_at, domain_id)
+      VALUES (?,?,?,?,?,?,?)`).run(key, endpoint, res.locals.idempotencyRequestHash,
+        JSON.stringify(body), status, nowIso(), res.req.domainId);
   } catch { /* 幂等记录失败不影响主流程 */ }
 }
 

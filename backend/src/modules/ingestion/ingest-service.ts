@@ -9,6 +9,7 @@ import { validatePayload } from '../ontology/ontology-service';
 import { writeAudit } from '../audit/audit-service';
 import { processObjectChange } from '../automation/automation-service';
 import { sha256 } from '../../shared/hash';
+import { currentDomainId } from '../domains/domain-service';
 
 export interface MappingConfig {
   typeKey: string;
@@ -75,10 +76,10 @@ export function createIngestJob(input: {
   const jobId = newId('ing');
   const now = nowIso();
   db.prepare(`INSERT INTO ingest_job
-    (id, source_type, filename, status, total_rows, accepted_rows, rejected_rows, mapping_json, errors_json, created_by, created_at, finished_at)
-    VALUES (?,?,?,?,?,0,0,?, '[]', ?,?,NULL)`).run(
+    (id, source_type, filename, status, total_rows, accepted_rows, rejected_rows, mapping_json, errors_json, created_by, created_at, finished_at, domain_id)
+    VALUES (?,?,?,?,?,0,0,?, '[]', ?,?,NULL,?)`).run(
     jobId, input.sourceType, input.filename, input.mapping ? 'ready' : 'mapping',
-    input.rows.length, JSON.stringify(input.mapping ?? {}), input.createdBy, now
+    input.rows.length, JSON.stringify(input.mapping ?? {}), input.createdBy, now, currentDomainId()
   );
   const insertRow = db.prepare(`INSERT INTO ingest_row (id, job_id, row_index, raw_json, status, error, mapped_object_id)
     VALUES (?,?,?,?, 'pending', '', NULL)`);
@@ -94,7 +95,7 @@ export function createIngestJob(input: {
 
 export function getIngestJob(jobId: string) {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM ingest_job WHERE id = ?').get(jobId) as any;
+  const row = db.prepare('SELECT * FROM ingest_job WHERE id = ? AND domain_id = ?').get(jobId, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `导入任务不存在: ${jobId}`);
   return {
     id: row.id,
@@ -113,7 +114,7 @@ export function getIngestJob(jobId: string) {
 }
 
 export function listIngestJobs() {
-  return (getDb().prepare('SELECT id FROM ingest_job ORDER BY created_at DESC LIMIT 50').all() as any[])
+  return (getDb().prepare('SELECT id FROM ingest_job WHERE domain_id = ? ORDER BY created_at DESC LIMIT 50').all(currentDomainId()) as any[])
     .map((r) => getIngestJob(r.id));
 }
 

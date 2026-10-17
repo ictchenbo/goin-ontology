@@ -7,6 +7,7 @@ import { newId } from '../../shared/ids';
 import { AppError } from '../../shared/errors';
 import { AuthUser, requireObjectAccess } from '../auth/auth-service';
 import { writeAudit } from '../audit/audit-service';
+import { currentDomainId } from '../domains/domain-service';
 
 function attachmentDir() {
   return process.env.ATTACHMENT_DIR || path.join(path.dirname(getDbPath()), 'attachments');
@@ -35,10 +36,10 @@ export function saveAttachment(objectId: string, file: Express.Multer.File, acto
   try {
     fs.writeFileSync(target, file.buffer, { flag: 'wx', mode: 0o600 });
     db.prepare(`INSERT INTO attachment
-      (id,object_id,filename,media_type,byte_size,sha256,storage_path,security_labels,uploaded_by,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+      (id,object_id,filename,media_type,byte_size,sha256,storage_path,security_labels,uploaded_by,created_at,domain_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
       id, objectId, filename, file.mimetype || 'application/octet-stream',
-      file.size, digest, target, object.security_labels, actor.username, nowIso()
+      file.size, digest, target, object.security_labels, actor.username, nowIso(), currentDomainId()
     );
     writeAudit({ actor: actor.username, eventType: 'attachment.uploaded',
       resourceType: 'object', resourceId: objectId,
@@ -57,7 +58,7 @@ export function listAttachments(objectId: string, actor: AuthUser) {
 }
 
 export function getAttachment(id: string, actor: AuthUser) {
-  const row = getDb().prepare('SELECT * FROM attachment WHERE id = ?').get(id) as any;
+  const row = getDb().prepare('SELECT * FROM attachment WHERE id = ? AND domain_id = ?').get(id, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', '附件不存在');
   requireObjectAccess(actor, row.object_id);
   if (!fs.existsSync(row.storage_path)) throw new AppError('NOT_FOUND', '附件文件已丢失');

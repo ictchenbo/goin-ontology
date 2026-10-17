@@ -15,6 +15,9 @@ import { ApprovalsPage } from './pages/ApprovalsPage';
 import { ActionsPage } from './pages/ActionsPage';
 import { IngestPage } from './pages/IngestPage';
 import { AuditPage } from './pages/AuditPage';
+import { getCurrentDomain } from './lib/domain';
+import { DomainSelectPage } from './pages/DomainSelectPage';
+import { DomainAdminPage, DomainDetailPage } from './pages/DomainAdminPage';
 
 /** 受保护路由包装 */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -27,15 +30,22 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function RequireDomain({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  if (!getCurrentDomain()) return <Navigate to="/domains/select" state={{ from: location.pathname }} replace />;
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/domains/select" element={<RequireAuth><DomainSelectPage /></RequireAuth>} />
       <Route
         path="/"
         element={
           <RequireAuth>
-            <Layout />
+            <RequireDomain><Layout /></RequireDomain>
           </RequireAuth>
         }
       >
@@ -53,6 +63,8 @@ export default function App() {
         <Route path="actions" element={<ActionsPage />} />
         <Route path="ingest" element={<IngestPage />} />
         <Route path="audit" element={<AuditPage />} />
+        <Route path="admin/domains" element={<DomainAdminPage />} />
+        <Route path="admin/domains/:domainId" element={<DomainDetailPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

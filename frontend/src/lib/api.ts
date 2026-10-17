@@ -7,6 +7,7 @@ export interface ApiError {
   details?: unknown;
   correlationId?: string;
 }
+import { getCurrentDomain } from './domain';
 
 const TOKEN_KEY = 'ooda_token';
 const USER_KEY = 'ooda_user';
@@ -59,6 +60,8 @@ export async function apiFetch<T>(
   };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
+  const domain = getCurrentDomain();
+  if (domain) headers['X-Domain-Id'] = domain.id;
 
   let res: Response;
   try {
@@ -97,8 +100,10 @@ export async function apiFetch<T>(
 
 export async function downloadAttachment(id: string, filename: string): Promise<void> {
   const token = getToken();
+  const domain = getCurrentDomain();
   const response = await fetch(`/api/attachments/${encodeURIComponent(id)}/download`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(domain ? { 'X-Domain-Id': domain.id } : {}) },
   });
   if (!response.ok) {
     let message = `附件下载失败 (${response.status})`;

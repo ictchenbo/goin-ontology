@@ -8,6 +8,7 @@ import { validatePayload, getType, type PropertyDef } from '../ontology/ontology
 import { evaluateFunction } from '../functions/function-service';
 import { clearanceAllows, redactFields, requireObjectAccess, AuthUser } from '../auth/auth-service';
 import { invalidateCasesForObject } from '../decision/staleness-service';
+import { currentDomainId } from '../domains/domain-service';
 
 export interface ObjectInput {
   typeKey: string;
@@ -31,9 +32,9 @@ export function createObject(input: ObjectInput) {
   const schemaVersion = type.versions.find((v) => v.state === 'published')?.schemaVersion ?? 1;
   const tx = db.transaction(() => {
     db.prepare(`INSERT INTO object_instance
-      (object_id, type_key, title, payload_json, revision, security_labels, created_at, updated_at, deleted, schema_version)
-      VALUES (?,?,?,?,1,?,?,?,0,?)`).run(
-      id, input.typeKey, title, JSON.stringify(payload), JSON.stringify(labels), now, now, schemaVersion
+      (object_id, type_key, title, payload_json, revision, security_labels, created_at, updated_at, deleted, schema_version, domain_id)
+      VALUES (?,?,?,?,1,?,?,?,0,?,?)`).run(
+      id, input.typeKey, title, JSON.stringify(payload), JSON.stringify(labels), now, now, schemaVersion, currentDomainId()
     );
     db.prepare(`INSERT INTO object_revision
       (id, object_id, revision, payload_json, changed_fields, changed_by, change_reason, created_at)
@@ -87,7 +88,8 @@ export interface WriteObjectInput {
 // 更新对象：比较 revision，历史修订只追加
 export function updateObject(input: WriteObjectInput) {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM object_instance WHERE object_id = ? AND deleted = 0').get(input.objectId) as any;
+  const row = db.prepare('SELECT * FROM object_instance WHERE object_id = ? AND deleted = 0 AND domain_id = ?')
+    .get(input.objectId, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `对象不存在: ${input.objectId}`);
   if (input.expectedRevision !== undefined && input.expectedRevision !== row.revision) {
     throw new AppError('CONFLICT', `对象修订冲突: 当前 ${row.revision}, 期望 ${input.expectedRevision}`, {
@@ -137,7 +139,8 @@ export function updateObject(input: WriteObjectInput) {
 // 删除默认采取失效标记以保留历史
 export function softDeleteObject(objectId: string, actor: string, reason?: string, skipInvalidation = false) {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM object_instance WHERE object_id = ?').get(objectId) as any;
+  const row = db.prepare('SELECT * FROM object_instance WHERE object_id = ? AND domain_id = ?')
+    .get(objectId, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `对象不存在: ${objectId}`);
   db.prepare('UPDATE object_instance SET deleted = 1, updated_at = ? WHERE object_id = ?').run(nowIso(), objectId);
   db.prepare('UPDATE link_instance SET is_valid = 0, valid_to = ? WHERE (from_object_id = ? OR to_object_id = ?) AND is_valid = 1')
@@ -152,7 +155,8 @@ export function softDeleteObject(objectId: string, actor: string, reason?: strin
 
 export function getObject(objectId: string, opts: { actor?: AuthUser; includeHistory?: boolean } = {}) {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM object_instance WHERE object_id = ? AND deleted = 0').get(objectId) as any;
+  const row = db.prepare('SELECT * FROM object_instance WHERE object_id = ? AND deleted = 0 AND domain_id = ?')
+    .get(objectId, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `对象不存在: ${objectId}`);
   const labels = JSON.parse(row.security_labels || '["PUBLIC"]');
   if (opts.actor && !clearanceAllows(opts.actor, labels)) {
@@ -295,8 +299,8 @@ export interface QueryInput {
 
 export function queryObjects(query: QueryInput, user?: AuthUser) {
   const db = getDb();
-  const where: string[] = [];
-  const params: unknown[] = [];
+  const where: string[] = ['domain_id = ?'];
+  const params: unknown[] = [currentDomainId()];
   if (query.typeKey) { where.push('type_key = ?'); params.push(query.typeKey); }
   if (!query.includeDeleted) where.push('deleted = 0');
   if (query.text) {
@@ -358,7 +362,8 @@ export function getNeighborhood(objectId: string, depth = 2, maxNodes = 80, acto
   const visited = new Set<string>();
   let frontier = [objectId];
 
-  const rootNode = db.prepare('SELECT * FROM object_instance WHERE object_id = ?').get(objectId) as any;
+  const rootNode = db.prepare('SELECT * FROM object_instance WHERE object_id = ? AND domain_id = ?')
+    .get(objectId, currentDomainId()) as any;
   if (!rootNode) throw new AppError('NOT_FOUND', `对象不存在: ${objectId}`);
   nodes.set(objectId, {
     objectId, typeKey: rootNode.type_key, title: rootNode.title,
@@ -414,11 +419,14 @@ export function createLink(input: {
   sourceId?: string;
 }) {
   const db = getDb();
-  const linkDef = db.prepare('SELECT * FROM link_def WHERE link_key = ?').get(input.linkKey) as any;
+  const linkDef = db.prepare('SELECT * FROM link_def WHERE link_key = ? AND domain_id = ?')
+    .get(input.linkKey, currentDomainId()) as any;
   if (!linkDef) throw new AppError('NOT_FOUND', `关系定义不存在: ${input.linkKey}`);
   if (linkDef.state !== 'published') throw new AppError('PRECONDITION_FAILED', '关系定义尚未发布或已归档');
-  const from = db.prepare('SELECT type_key FROM object_instance WHERE object_id = ? AND deleted = 0').get(input.fromObjectId) as any;
-  const to = db.prepare('SELECT type_key FROM object_instance WHERE object_id = ? AND deleted = 0').get(input.toObjectId) as any;
+  const from = db.prepare('SELECT type_key FROM object_instance WHERE object_id = ? AND deleted = 0 AND domain_id = ?')
+    .get(input.fromObjectId, currentDomainId()) as any;
+  const to = db.prepare('SELECT type_key FROM object_instance WHERE object_id = ? AND deleted = 0 AND domain_id = ?')
+    .get(input.toObjectId, currentDomainId()) as any;
   if (!from || !to) throw new AppError('NOT_FOUND', '起点或终点对象不存在');
   if (from.type_key !== linkDef.from_type) {
     throw new AppError('SCHEMA_ERROR', `起点类型应为 ${linkDef.from_type}，实际 ${from.type_key}`);
@@ -434,10 +442,10 @@ export function createLink(input: {
   const id = newId('lnk');
   const now = nowIso();
   db.prepare(`INSERT INTO link_instance
-    (id, link_key, from_object_id, to_object_id, props_json, valid_from, valid_to, is_valid, source_id, created_at, created_by)
-    VALUES (?,?,?,?,?,?,NULL,1,?,?,?)`).run(
+    (id, link_key, from_object_id, to_object_id, props_json, valid_from, valid_to, is_valid, source_id, created_at, created_by, domain_id)
+    VALUES (?,?,?,?,?,?,NULL,1,?,?,?,?)`).run(
     id, input.linkKey, input.fromObjectId, input.toObjectId,
-    JSON.stringify(input.props ?? {}), now, input.sourceId ?? null, now, input.actor
+    JSON.stringify(input.props ?? {}), now, input.sourceId ?? null, now, input.actor, currentDomainId()
   );
   writeAudit({
     actor: input.actor, eventType: 'link.created', resourceType: 'link',
@@ -515,8 +523,8 @@ export function listLinks(filter: {
 } = {}) {
   const db = getDb();
   let sql = `SELECT li.*, ld.display_name AS link_display, ld.cardinality
-             FROM link_instance li LEFT JOIN link_def ld ON ld.link_key = li.link_key WHERE 1=1`;
-  const params: unknown[] = [];
+             FROM link_instance li LEFT JOIN link_def ld ON ld.link_key = li.link_key WHERE li.domain_id = ?`;
+  const params: unknown[] = [currentDomainId()];
   if (filter.linkKey) { sql += ' AND li.link_key = ?'; params.push(filter.linkKey); }
   if (filter.fromObjectId) { sql += ' AND li.from_object_id = ?'; params.push(filter.fromObjectId); }
   if (filter.toObjectId) { sql += ' AND li.to_object_id = ?'; params.push(filter.toObjectId); }

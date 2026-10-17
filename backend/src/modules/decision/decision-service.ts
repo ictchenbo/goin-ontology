@@ -8,6 +8,7 @@ import { checkConstraints, ConstraintCheck } from '../rules/rule-service';
 import { evaluate, evaluateBoolean } from '../../shared/rule-dsl';
 import { buildSituationSnapshot, getSnapshot } from '../situation/situation-service';
 import { sha256, stableStringify } from '../../shared/hash';
+import { currentDomainId } from '../domains/domain-service';
 
 // 案例状态机：New → Observed → Oriented → OptionsReady → PendingApproval → Approved
 //           → Executing → Completed / Failed → OutcomeReviewed → Closed
@@ -80,7 +81,8 @@ export interface ConstraintDef {
 export function upsertDecisionType(input: DecisionTypeInput, actor: string) {
   const db = getDb();
   const now = nowIso();
-  const existing = db.prepare('SELECT type_key FROM decision_type WHERE type_key = ?').get(input.typeKey);
+  const existing = db.prepare('SELECT type_key, domain_id FROM decision_type WHERE type_key = ?').get(input.typeKey) as any;
+  if (existing && existing.domain_id !== currentDomainId()) throw new AppError('CONFLICT', '决策类型标识已被其他领域使用');
   const row = {
     typeKey: input.typeKey,
     displayName: input.displayName,
@@ -105,11 +107,11 @@ export function upsertDecisionType(input: DecisionTypeInput, actor: string) {
   } else {
     db.prepare(`INSERT INTO decision_type
       (type_key, display_name, description, trigger_config, target_object_type, required_facts,
-       role_matrix, policy_version, criteria, constraints, approval_route, state, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?, 'published', ?,?)`).run(
+       role_matrix, policy_version, criteria, constraints, approval_route, state, created_at, updated_at, domain_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?, 'published', ?,?,?)`).run(
       row.typeKey, row.displayName, row.description, row.triggerConfig, row.targetObjectType,
       row.requiredFacts, row.roleMatrix, row.policyVersion, row.criteria, row.constraints,
-      row.approvalRoute, now, now
+      row.approvalRoute, now, now, currentDomainId()
     );
   }
   writeAudit({
@@ -124,7 +126,8 @@ export function upsertDecisionType(input: DecisionTypeInput, actor: string) {
 }
 
 export function getDecisionType(typeKey: string) {
-  const row = getDb().prepare('SELECT * FROM decision_type WHERE type_key = ?').get(typeKey) as any;
+  const row = getDb().prepare('SELECT * FROM decision_type WHERE type_key = ? AND domain_id = ?')
+    .get(typeKey, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `决策类型不存在: ${typeKey}`);
   return {
     typeKey: row.type_key,
@@ -144,7 +147,8 @@ export function getDecisionType(typeKey: string) {
 }
 
 export function listDecisionTypes() {
-  return (getDb().prepare('SELECT type_key FROM decision_type ORDER BY type_key').all() as any[])
+  return (getDb().prepare('SELECT type_key FROM decision_type WHERE domain_id = ? ORDER BY type_key')
+    .all(currentDomainId()) as any[])
     .map((r) => getDecisionType(r.type_key));
 }
 
@@ -203,12 +207,12 @@ export function createCase(input: CreateCaseInput) {
     .get(input.decisionTypeKey) as any;
   db.prepare(`INSERT INTO decision_case
     (id, case_key, decision_type_key, title, summary, state, owner, priority, deadline, trigger_ref,
-     snapshot_id, model_version_ref, security_labels, created_at, updated_at)
-    VALUES (?,?,?,?,?, 'New', ?,?,?,?,?,?,?,?,?)`).run(
+     snapshot_id, model_version_ref, security_labels, created_at, updated_at, domain_id)
+    VALUES (?,?,?,?,?, 'New', ?,?,?,?,?,?,?,?,?,?)`).run(
     id, caseKey, input.decisionTypeKey, input.title.trim(), input.summary ?? '', input.owner,
     input.priority ?? 'normal', input.deadline ?? null, triggerRef,
     null, JSON.stringify({ policy: dt.policyVersion, decisionTypeVersionId: version?.id ?? null }),
-    JSON.stringify(labels), now, now
+    JSON.stringify(labels), now, now, currentDomainId()
   );
   writeAudit({
     actor: input.actor.username, eventType: 'case.created', resourceType: 'decision_case',
@@ -219,7 +223,8 @@ export function createCase(input: CreateCaseInput) {
 
 export function getCase(caseId: string, user?: AuthUser) {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM decision_case WHERE id = ?').get(caseId) as any;
+  const row = db.prepare('SELECT * FROM decision_case WHERE id = ? AND domain_id = ?')
+    .get(caseId, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `案例不存在: ${caseId}`);
   const labels = JSON.parse(row.security_labels || '["PUBLIC"]');
   if (user) requireCaseAccess(user, caseId);
@@ -417,8 +422,8 @@ function mapActionRun(r: any) {
 
 export function listCases(filter: { state?: string; decisionTypeKey?: string; owner?: string; text?: string; limit?: number; offset?: number } = {}, user?: AuthUser) {
   const db = getDb();
-  const where: string[] = [];
-  const params: unknown[] = [];
+  const where: string[] = ['domain_id = ?'];
+  const params: unknown[] = [currentDomainId()];
   if (filter.state) { where.push('state = ?'); params.push(filter.state); }
   if (filter.decisionTypeKey) { where.push('decision_type_key = ?'); params.push(filter.decisionTypeKey); }
   if (filter.owner) { where.push('owner = ?'); params.push(filter.owner); }
@@ -1028,8 +1033,8 @@ export function listPendingApprovals(user?: AuthUser, status?: string) {
      FROM approval a
      JOIN decision_case c ON c.id = a.case_id
      LEFT JOIN alternative alt ON alt.id = a.alternative_id
-     WHERE ${where} ORDER BY a.created_at DESC LIMIT 200`
-  ).all(...params) as any[];
+     WHERE ${where} AND c.domain_id = ? ORDER BY a.created_at DESC LIMIT 200`
+  ).all(...params, currentDomainId()) as any[];
   return rows.filter((r) => !user || clearanceAllows(user, JSON.parse(r.security_labels || '["PUBLIC"]'))).map((r) => {
     // 与 decideApproval 同一判定源：决策类型 roleMatrix.approve（含 admin 隐式放行）
     let approveRoles = parseRoleList(r.required_role);

@@ -9,6 +9,7 @@ import { evaluateBoolean } from '../../shared/rule-dsl';
 import { updateObject, createObject, createLink, softDeleteObject } from '../objects/object-service';
 import { getAlternative, getDecisionTypeForCase } from '../decision/decision-service';
 import { invalidateCasesForObject } from '../decision/staleness-service';
+import { currentDomainId } from '../domains/domain-service';
 
 export interface ActionTypeInput {
   actionKey: string;
@@ -37,7 +38,8 @@ export interface ActionTypeInput {
 export function upsertActionType(input: ActionTypeInput, actor: string) {
   const db = getDb();
   const now = nowIso();
-  const existing = db.prepare('SELECT version FROM action_type WHERE action_key = ?').get(input.actionKey) as any;
+  const existing = db.prepare('SELECT version, domain_id FROM action_type WHERE action_key = ?').get(input.actionKey) as any;
+  if (existing && existing.domain_id !== currentDomainId()) throw new AppError('CONFLICT', 'Action 标识已被其他领域使用');
   const version = existing ? existing.version + 1 : 1;
   const values = {
     name: input.name,
@@ -62,11 +64,11 @@ export function upsertActionType(input: ActionTypeInput, actor: string) {
   } else {
     db.prepare(`INSERT INTO action_type
       (action_key, name, description, params_schema, preconditions, write_set, approval_policy,
-       required_roles, external_effects, compensation, version, state, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?, 'published', ?, ?)`).run(
+       required_roles, external_effects, compensation, version, state, created_at, updated_at, domain_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?, 'published', ?, ?, ?)`).run(
       input.actionKey, values.name, values.description, values.paramsSchema, values.preconditions,
       values.writeSet, values.approvalPolicy, values.requiredRoles, values.externalEffects,
-      values.compensation, version, now, now
+      values.compensation, version, now, now, currentDomainId()
     );
   }
   writeAudit({
@@ -77,7 +79,8 @@ export function upsertActionType(input: ActionTypeInput, actor: string) {
 }
 
 export function getActionType(actionKey: string) {
-  const row = getDb().prepare('SELECT * FROM action_type WHERE action_key = ?').get(actionKey) as any;
+  const row = getDb().prepare('SELECT * FROM action_type WHERE action_key = ? AND domain_id = ?')
+    .get(actionKey, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `Action 类型不存在: ${actionKey}`);
   return {
     actionKey: row.action_key,
@@ -98,7 +101,8 @@ export function getActionType(actionKey: string) {
 }
 
 export function listActionTypes() {
-  return (getDb().prepare('SELECT action_key FROM action_type ORDER BY action_key').all() as any[])
+  return (getDb().prepare('SELECT action_key FROM action_type WHERE domain_id = ? ORDER BY action_key')
+    .all(currentDomainId()) as any[])
     .map((r) => getActionType(r.action_key));
 }
 
@@ -151,6 +155,7 @@ export interface ValidationPreview {
 // 验证预览：不执行
 export function validateAction(input: ExecuteActionInput): ValidationPreview {
   const at = getActionType(input.actionKey);
+  if (input.caseId) requireCaseAccess(input.actor, input.caseId);
   const errors: string[] = [];
   if (at.requiredRoles.length && !hasRole(input.actor, at.requiredRoles)) {
     errors.push(`需要角色: ${at.requiredRoles.join('/')}`);
@@ -191,7 +196,7 @@ export function validateAction(input: ExecuteActionInput): ValidationPreview {
   if (policy?.legalAuthorityParam) {
     const authorityId = String(input.params[policy.legalAuthorityParam] ?? '');
     const authority = authorityId ? getDb().prepare(`SELECT type_key, payload_json, security_labels
-      FROM object_instance WHERE object_id = ? AND deleted = 0`).get(authorityId) as any : null;
+      FROM object_instance WHERE object_id = ? AND deleted = 0 AND domain_id = ?`).get(authorityId, currentDomainId()) as any : null;
     if (!authority || (policy.requiredAuthorityType && authority.type_key !== policy.requiredAuthorityType)) {
       errors.push('缺少有效法定授权对象');
     } else {
@@ -209,7 +214,7 @@ export function validateAction(input: ExecuteActionInput): ValidationPreview {
   if (policy?.relatedObjectParam) {
     const relatedId = String(input.params[policy.relatedObjectParam] ?? '');
     const related = relatedId ? getDb().prepare(`SELECT type_key, payload_json, security_labels
-      FROM object_instance WHERE object_id = ? AND deleted = 0`).get(relatedId) as any : null;
+      FROM object_instance WHERE object_id = ? AND deleted = 0 AND domain_id = ?`).get(relatedId, currentDomainId()) as any : null;
     if (!related || (policy.relatedObjectType && related.type_key !== policy.relatedObjectType)) {
       errors.push('关联对象不存在或类型不匹配');
     } else {
@@ -263,7 +268,12 @@ export function executeAction(input: ExecuteActionInput) {
     caseId: input.caseId ?? null, alternativeId: input.alternativeId ?? null, actor: input.actor.username }));
 
   // 幂等：已存在则返回首次结果
-  const existing = db.prepare('SELECT * FROM action_run WHERE idempotency_key = ?').get(input.idempotencyKey) as any;
+  const existing = db.prepare('SELECT * FROM action_run WHERE idempotency_key = ? AND domain_id = ?')
+    .get(input.idempotencyKey, currentDomainId()) as any;
+  if (!existing && db.prepare('SELECT 1 FROM action_run WHERE idempotency_key = ?')
+    .get(input.idempotencyKey)) {
+    throw new AppError('CONFLICT', '幂等键已被其他领域使用');
+  }
   if (existing) {
     if (existing.request_hash && existing.request_hash !== requestHash) {
       throw new AppError('IDEMPOTENCY_CONFLICT', '幂等键已用于不同 Action 请求');
@@ -386,11 +396,11 @@ export function executeAction(input: ExecuteActionInput) {
       // 写入执行记录（pending -> executing）
       d.prepare(`INSERT INTO action_run
         (id, case_id, alternative_id, action_key, params_json, status, idempotency_key, result_json, error,
-         actor, executed_at, created_at, retry_count, request_hash, action_version, action_definition_json)
-        VALUES (?,?,?,?,?, 'executing', ?, '{}', '', ?, NULL, ?, 0, ?, ?, ?)`).run(
+         actor, executed_at, created_at, retry_count, request_hash, action_version, action_definition_json, domain_id)
+        VALUES (?,?,?,?,?, 'executing', ?, '{}', '', ?, NULL, ?, 0, ?, ?, ?, ?)`).run(
         runId, caseId, alternativeId, input.actionKey,
         JSON.stringify(input.params), input.idempotencyKey, input.actor.username, now, requestHash,
-        at.version, JSON.stringify(at)
+        at.version, JSON.stringify(at), currentDomainId()
       );
 
       // 应用写集合
@@ -405,9 +415,9 @@ export function executeAction(input: ExecuteActionInput) {
       for (const eff of at.externalEffects) {
         const payload = renderTemplate(eff.template, input.params, results);
         d.prepare(`INSERT INTO outbox_message
-          (id, aggregate_type, aggregate_id, event_type, payload_json, delivery_state, attempts, last_error, created_at, delivered_at)
-          VALUES (?,?,?,?,?, 'pending', 0, '', ?, NULL)`).run(
-          newId('out'), 'action_run', runId, eff.target, JSON.stringify(payload), now
+          (id, aggregate_type, aggregate_id, event_type, payload_json, delivery_state, attempts, last_error, created_at, delivered_at, domain_id)
+          VALUES (?,?,?,?,?, 'pending', 0, '', ?, NULL, ?)`).run(
+          newId('out'), 'action_run', runId, eff.target, JSON.stringify(payload), now, currentDomainId()
         );
       }
 
@@ -437,10 +447,10 @@ export function executeAction(input: ExecuteActionInput) {
   } catch (e: any) {
     db.prepare(`INSERT OR IGNORE INTO action_run
       (id, case_id, alternative_id, action_key, params_json, status, idempotency_key, result_json, error,
-       actor, executed_at, created_at, retry_count, request_hash, action_version, action_definition_json)
-      VALUES (?,?,?,?,?,'failed',?,'{}',?,?,NULL,?,1,?,?,?)`).run(runId, caseId, alternativeId,
+       actor, executed_at, created_at, retry_count, request_hash, action_version, action_definition_json, domain_id)
+      VALUES (?,?,?,?,?,'failed',?,'{}',?,?,NULL,?,1,?,?,?,?)`).run(runId, caseId, alternativeId,
       input.actionKey, JSON.stringify(input.params), input.idempotencyKey, e.message, input.actor.username, now,
-      requestHash, at.version, JSON.stringify(at));
+      requestHash, at.version, JSON.stringify(at), currentDomainId());
     writeAudit({
       actor: input.actor.username, eventType: 'action.failed', resourceType: 'action_run',
       resourceId: runId, detail: { error: e.message },
@@ -553,15 +563,16 @@ function mapRun(r: any) {
 }
 
 export function getActionRun(runId: string) {
-  const r = getDb().prepare('SELECT * FROM action_run WHERE id = ?').get(runId) as any;
+  const r = getDb().prepare('SELECT * FROM action_run WHERE id = ? AND domain_id = ?')
+    .get(runId, currentDomainId()) as any;
   if (!r) throw new AppError('NOT_FOUND', `Action 运行不存在: ${runId}`);
   return mapRun(r);
 }
 
 export function listActionRuns(filter: { caseId?: string; status?: string; limit?: number } = {}, user?: AuthUser) {
   const db = getDb();
-  let sql = 'SELECT * FROM action_run WHERE 1=1';
-  const params: unknown[] = [];
+  let sql = 'SELECT * FROM action_run WHERE domain_id = ?';
+  const params: unknown[] = [currentDomainId()];
   if (filter.caseId) { sql += ' AND case_id = ?'; params.push(filter.caseId); }
   if (filter.status) { sql += ' AND status = ?'; params.push(filter.status); }
   sql += ' ORDER BY created_at DESC';
@@ -577,8 +588,8 @@ export function listActionRuns(filter: { caseId?: string; status?: string; limit
 export async function deliverOutbox(limit = 20) {
   const db = getDb();
   const rows = db.prepare(
-    `SELECT * FROM outbox_message WHERE delivery_state IN ('pending','failed') ORDER BY created_at LIMIT ?`
-  ).all(limit) as any[];
+    `SELECT * FROM outbox_message WHERE domain_id = ? AND delivery_state IN ('pending','failed') ORDER BY created_at LIMIT ?`
+  ).all(currentDomainId(), limit) as any[];
   const results: Array<{ id: string; state: string; error?: string }> = [];
   for (const r of rows) {
     results.push(await deliverMessage(r));
@@ -617,8 +628,8 @@ async function deliverMessage(r: any): Promise<{ id: string; state: string; erro
 
 export function listOutbox(filter: { state?: string; limit?: number } = {}) {
   const db = getDb();
-  let sql = 'SELECT * FROM outbox_message WHERE 1=1';
-  const params: unknown[] = [];
+  let sql = 'SELECT * FROM outbox_message WHERE domain_id = ?';
+  const params: unknown[] = [currentDomainId()];
   if (filter.state) { sql += ' AND delivery_state = ?'; params.push(filter.state); }
   sql += ' ORDER BY created_at DESC LIMIT ?';
   params.push(Math.min(filter.limit ?? 50, 200));

@@ -5,6 +5,7 @@ import { AppError } from '../../shared/errors';
 import { writeAudit } from '../audit/audit-service';
 import { stableStringify } from '../../shared/hash';
 import { getFunction } from '../functions/function-service';
+import { currentDomainId } from '../domains/domain-service';
 
 export type PropertyType =
   | 'string' | 'number' | 'boolean' | 'datetime' | 'enum' | 'reference' | 'json';
@@ -59,10 +60,10 @@ export function createType(input: CreateTypeInput) {
   const now = nowIso();
   const tx = db.transaction(() => {
     db.prepare(`INSERT INTO ontology_type
-      (type_key, display_name, description, category, interfaces, icon, state, current_version, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,1,?,?)`).run(
+      (type_key, display_name, description, category, interfaces, icon, state, current_version, created_at, updated_at, domain_id)
+      VALUES (?,?,?,?,?,?,?,1,?,?,?)`).run(
       input.typeKey, input.displayName, input.description ?? '', input.category ?? 'entity',
-      JSON.stringify(input.interfaces ?? []), input.icon ?? 'box', 'draft', now, now
+      JSON.stringify(input.interfaces ?? []), input.icon ?? 'box', 'draft', now, now, currentDomainId()
     );
     db.prepare(`INSERT INTO type_version
       (id, type_key, schema_version, definition_json, state, change_note, created_by, created_at)
@@ -118,8 +119,10 @@ export function validateDefinition(def: TypeDefinition): void {
       if (!p.sharedKey || !Number.isInteger(p.sharedVersion) || p.sharedVersion! < 1) {
         throw new AppError('SCHEMA_ERROR', `共享属性 ${p.name} 缺少有效来源版本`);
       }
-      const source = getDb().prepare(`SELECT definition_json FROM shared_property_version
-        WHERE property_key = ? AND version = ?`).get(p.sharedKey, p.sharedVersion) as
+      const source = getDb().prepare(`SELECT spv.definition_json FROM shared_property_version spv
+        JOIN shared_property sp ON sp.property_key = spv.property_key
+        WHERE spv.property_key = ? AND spv.version = ? AND sp.domain_id = ?`)
+        .get(p.sharedKey, p.sharedVersion, currentDomainId()) as
         { definition_json: string } | undefined;
       if (!source) throw new AppError('SCHEMA_ERROR', `共享属性版本不存在: ${p.sharedKey} v${p.sharedVersion}`);
       const { sharedKey: _key, sharedVersion: _version, ...inline } = p;
@@ -147,9 +150,10 @@ function assertSharedDefinition(propertyKey: string, definition: PropertyDef): P
 
 export function listSharedProperties() {
   const db = getDb();
-  const latestDefinitions = db.prepare(`SELECT type_key, definition_json FROM type_version
-    WHERE state IN ('draft', 'published')`)
-    .all() as Array<{ type_key: string; definition_json: string }>;
+  const latestDefinitions = db.prepare(`SELECT tv.type_key, tv.definition_json FROM type_version tv
+    JOIN ontology_type ot ON ot.type_key = tv.type_key
+    WHERE tv.state IN ('draft', 'published') AND ot.domain_id = ?`)
+    .all(currentDomainId()) as Array<{ type_key: string; definition_json: string }>;
   const usages = new Map<string, string[]>();
   for (const type of latestDefinitions) {
     const def = JSON.parse(type.definition_json) as TypeDefinition;
@@ -158,7 +162,8 @@ export function listSharedProperties() {
         [...new Set([...(usages.get(property.sharedKey) ?? []), type.type_key])]);
     }
   }
-  return (db.prepare('SELECT * FROM shared_property ORDER BY updated_at DESC, created_at DESC, property_key').all() as any[])
+  return (db.prepare('SELECT * FROM shared_property WHERE domain_id = ? ORDER BY updated_at DESC, created_at DESC, property_key')
+    .all(currentDomainId()) as any[])
     .map((row) => ({ propertyKey: row.property_key,
       definition: JSON.parse(row.definition_json) as PropertyDef,
       version: row.current_version, usedBy: usages.get(row.property_key) ?? [],
@@ -174,8 +179,8 @@ export function createSharedProperty(propertyKey: string, definition: PropertyDe
       throw new AppError('CONFLICT', `共享属性已存在: ${propertyKey}`);
     }
     db.prepare(`INSERT INTO shared_property
-      (property_key, definition_json, current_version, created_by, created_at, updated_at)
-      VALUES (?,?,1,?,?,?)`).run(propertyKey, JSON.stringify(property), actor, now, now);
+      (property_key, definition_json, current_version, created_by, created_at, updated_at, domain_id)
+      VALUES (?,?,1,?,?,?,?)`).run(propertyKey, JSON.stringify(property), actor, now, now, currentDomainId());
     db.prepare(`INSERT INTO shared_property_version
       (id, property_key, version, definition_json, created_by, created_at)
       VALUES (?,?,1,?,?,?)`).run(newId('spv'), propertyKey, JSON.stringify(property), actor, now);
@@ -231,7 +236,8 @@ function assertInterfaces(def: TypeDefinition, keys: string[]): void {
 
 export function getType(typeKey: string) {
   const db = getDb();
-  const row = db.prepare('SELECT * FROM ontology_type WHERE type_key = ?').get(typeKey) as any;
+  const row = db.prepare('SELECT * FROM ontology_type WHERE type_key = ? AND domain_id = ?')
+    .get(typeKey, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `类型不存在: ${typeKey}`);
   const versions = db.prepare(
     'SELECT * FROM type_version WHERE type_key = ? ORDER BY schema_version DESC'
@@ -265,8 +271,10 @@ export function getType(typeKey: string) {
 export function listTypes(category?: string) {
   const db = getDb();
   const rows = category
-    ? db.prepare('SELECT * FROM ontology_type WHERE category = ? ORDER BY updated_at DESC, created_at DESC, type_key').all(category)
-    : db.prepare('SELECT * FROM ontology_type ORDER BY updated_at DESC, created_at DESC, type_key').all() as any[];
+    ? db.prepare('SELECT * FROM ontology_type WHERE domain_id = ? AND category = ? ORDER BY updated_at DESC, created_at DESC, type_key')
+      .all(currentDomainId(), category)
+    : db.prepare('SELECT * FROM ontology_type WHERE domain_id = ? ORDER BY updated_at DESC, created_at DESC, type_key')
+      .all(currentDomainId()) as any[];
   return (rows as any[]).map((row) => {
     const v = db.prepare(
       'SELECT definition_json FROM type_version WHERE type_key = ? ORDER BY schema_version DESC LIMIT 1'
@@ -799,11 +807,11 @@ export function createLinkDef(input: {
   try {
     db.prepare(`INSERT INTO link_def
       (link_key, display_name, from_type, to_type, cardinality, inverse_name, description, required,
-       allow_self_loop, state, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?, 'published', ?, ?)`).run(
+       allow_self_loop, state, created_at, updated_at, domain_id)
+      VALUES (?,?,?,?,?,?,?,?,?, 'published', ?, ?, ?)`).run(
       input.linkKey, input.displayName, input.fromType, input.toType,
       input.cardinality ?? '1:N', input.inverseName ?? '', input.description ?? '',
-      input.required ? 1 : 0, input.allowSelfLoop ? 1 : 0, now, now
+      input.required ? 1 : 0, input.allowSelfLoop ? 1 : 0, now, now, currentDomainId()
     );
   } catch (e: any) {
     if (String(e.message).includes('UNIQUE')) throw new AppError('CONFLICT', `关系已存在: ${input.linkKey}`);
@@ -818,15 +826,16 @@ export function createLinkDef(input: {
 }
 
 export function getLinkDef(linkKey: string) {
-  const row = getDb().prepare('SELECT * FROM link_def WHERE link_key = ?').get(linkKey) as any;
+  const row = getDb().prepare('SELECT * FROM link_def WHERE link_key = ? AND domain_id = ?')
+    .get(linkKey, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `关系不存在: ${linkKey}`);
   return mapLinkDef(row);
 }
 
 export function listLinkDefs(fromType?: string, toType?: string) {
   const db = getDb();
-  let sql = 'SELECT * FROM link_def WHERE 1=1';
-  const params: unknown[] = [];
+  let sql = 'SELECT * FROM link_def WHERE domain_id = ?';
+  const params: unknown[] = [currentDomainId()];
   if (fromType) { sql += ' AND from_type = ?'; params.push(fromType); }
   if (toType) { sql += ' AND to_type = ?'; params.push(toType); }
   sql += ' ORDER BY link_key';
@@ -863,10 +872,10 @@ export function createInterface(input: {
   validateInterfaceProperties(input.properties ?? []);
   try {
     const now = nowIso();
-    db.prepare(`INSERT INTO interface_def (interface_key, display_name, description, properties, capabilities, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?)`).run(
+    db.prepare(`INSERT INTO interface_def (interface_key, display_name, description, properties, capabilities, created_at, updated_at, domain_id)
+      VALUES (?,?,?,?,?,?,?,?)`).run(
       input.interfaceKey, input.displayName, input.description ?? '',
-      JSON.stringify(input.properties ?? []), JSON.stringify(input.capabilities ?? []), now, now
+      JSON.stringify(input.properties ?? []), JSON.stringify(input.capabilities ?? []), now, now, currentDomainId()
     );
   } catch (e: any) {
     if (String(e.message).includes('UNIQUE')) throw new AppError('CONFLICT', `Interface 已存在: ${input.interfaceKey}`);
@@ -882,7 +891,8 @@ export function createInterface(input: {
 }
 
 export function getInterface(key: string) {
-  const row = getDb().prepare('SELECT * FROM interface_def WHERE interface_key = ?').get(key) as any;
+  const row = getDb().prepare('SELECT * FROM interface_def WHERE interface_key = ? AND domain_id = ?')
+    .get(key, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `Interface 不存在: ${key}`);
   return {
     interfaceKey: row.interface_key,
@@ -896,7 +906,8 @@ export function getInterface(key: string) {
 }
 
 export function listInterfaces() {
-  return (getDb().prepare('SELECT * FROM interface_def ORDER BY interface_key').all() as any[])
+  return (getDb().prepare('SELECT * FROM interface_def WHERE domain_id = ? ORDER BY interface_key')
+    .all(currentDomainId()) as any[])
     .map((r) => getInterface(r.interface_key));
 }
 

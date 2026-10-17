@@ -16,10 +16,10 @@ let server: Server;
 let base = '';
 const tokens: Record<string, string> = {};
 
-async function request(method: string, url: string, user?: string, body?: unknown) {
+async function request(method: string, url: string, user?: string, body?: unknown, domainId = 'dom_existing') {
   const response = await fetch(`${base}/api${url}`, {
     method,
-    headers: { ...(user ? { Authorization: `Bearer ${tokens[user]}` } : {}),
+    headers: { ...(user ? { Authorization: `Bearer ${tokens[user]}`, 'X-Domain-Id': domainId } : {}),
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -103,7 +103,7 @@ test('Webhook 重试幂等与受控附件下载', async () => {
     },
   } });
   const payload = { rows: [{ id: 'webhook-1', name: 'Webhook 供应商', code: 'WEB-1', qualification: 'qualified' }] };
-  const headers = { 'Content-Type': 'application/json', 'X-Webhook-Secret': 'source-secret', 'X-Delivery-Key': 'delivery-1' };
+  const headers = { 'Content-Type': 'application/json', 'X-Webhook-Secret': 'source-secret', 'X-Delivery-Key': 'delivery-1', 'X-Domain-Id': 'dom_existing' };
   const send = () => fetch(`${base}/api/ingest/webhook/acceptance`, { method: 'POST', headers, body: JSON.stringify(payload) });
   const first = await (await send()).json() as any;
   assert.equal(first.result.accepted, 1, JSON.stringify(first));
@@ -117,12 +117,12 @@ test('Webhook 重试幂等与受控附件下载', async () => {
   const form = new FormData();
   form.append('file', new Blob(['evidence attachment'], { type: 'text/plain' }), 'evidence.txt');
   const upload = await fetch(`${base}/api/objects/${objectId}/attachments`, {
-    method: 'POST', headers: { Authorization: `Bearer ${tokens.analyst}` }, body: form,
+    method: 'POST', headers: { Authorization: `Bearer ${tokens.analyst}`, 'X-Domain-Id': 'dom_existing' }, body: form,
   });
   assert.equal(upload.status, 201, await upload.clone().text());
   const meta = await upload.json() as any;
   const download = await fetch(`${base}/api/attachments/${meta.id}/download`, {
-    headers: { Authorization: `Bearer ${tokens.observer}` },
+    headers: { Authorization: `Bearer ${tokens.observer}`, 'X-Domain-Id': 'dom_existing' },
   });
   assert.equal(download.status, 200);
   assert.equal(await download.text(), 'evidence attachment');
@@ -432,4 +432,58 @@ test('已签发令牌使用当前权限，停用账号立即失效', async () =>
 
   getDb().prepare('UPDATE users SET disabled = 1 WHERE id = ?').run(created.data.id);
   assert.equal((await authRequest('/auth/me')).status, 401);
+});
+
+test('应用领域自动写入、成员授权与跨领域隔离', async () => {
+  const { getDb } = require('../src/db/database');
+  const created = await request('POST', '/domains', 'admin', {
+    domainKey: 'domain-isolation-test', displayName: '隔离测试领域', description: '接口验收',
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const domainId = created.data.id as string;
+  const denied = await request('GET', '/ontology/types', 'analyst', undefined, domainId);
+  assert.equal(denied.status, 403);
+  const before = await request('GET', '/ontology/types', 'admin', undefined, domainId);
+  assert.equal(before.status, 200);
+  assert.equal(before.data.items.length, 0);
+
+  const type = await request('POST', '/ontology/types', 'admin', {
+    typeKey: 'DomainIsolationItem', displayName: '隔离对象',
+    definition: { properties: [{ name: 'name', type: 'string', required: true }] },
+  }, domainId);
+  assert.equal(type.status, 201, JSON.stringify(type.data));
+  const published = await request('POST', '/ontology/types/DomainIsolationItem/publish', 'admin', {}, domainId);
+  assert.equal(published.status, 200, JSON.stringify(published.data));
+  const object = await request('POST', '/objects', 'admin', {
+    typeKey: 'DomainIsolationItem', payload: { name: '仅测试领域可见' },
+  }, domainId);
+  assert.equal(object.status, 201, JSON.stringify(object.data));
+  assert.equal((await request('GET', `/objects/${object.data.objectId}`, 'admin')).status, 404);
+  assert.equal((await request('GET', '/objects?typeKey=DomainIsolationItem', 'admin')).data.total, 0);
+  assert.equal((await request('GET', '/objects?typeKey=Supplier', 'admin', undefined, domainId)).data.total, 0);
+  assert.equal((await request('POST', '/objects', 'admin', { typeKey: 'Supplier', payload: {} }, domainId)).status, 404);
+
+  const oldSource = getDb().prepare('SELECT id FROM source_record WHERE domain_id = ? LIMIT 1').get('dom_existing') as { id: string };
+  const foreignEvidence = await request('POST', '/evidence', 'admin', {
+    objectId: object.data.objectId, sourceId: oldSource.id, observedAt: new Date().toISOString(),
+  }, domainId);
+  assert.equal(foreignEvidence.status, 404);
+  const foreignWebhook = await fetch(`${base}/api/ingest/webhook/acceptance`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Domain-Id': domainId,
+      'X-Webhook-Secret': 'source-secret', 'X-Delivery-Key': 'foreign-domain' },
+    body: JSON.stringify({ rows: [{ id: 'foreign', name: 'test' }] }),
+  });
+  assert.equal(foreignWebhook.status, 403);
+
+  const analyst = getDb().prepare("SELECT id FROM users WHERE username = 'analyst'").get() as { id: string };
+  const added = await request('PUT', `/domains/${domainId}/members/${analyst.id}`, 'admin');
+  assert.equal(added.status, 200);
+  const visible = await request('GET', '/objects?typeKey=DomainIsolationItem', 'analyst', undefined, domainId);
+  assert.equal(visible.status, 200);
+  assert.equal(visible.data.total, 1);
+  const stored = getDb().prepare('SELECT domain_id FROM object_instance WHERE object_id = ?').get(object.data.objectId) as any;
+  assert.equal(stored.domain_id, domainId);
+  const removed = await request('DELETE', `/domains/${domainId}/members/${analyst.id}`, 'admin');
+  assert.equal(removed.status, 200);
+  assert.equal((await request('GET', '/objects', 'analyst', undefined, domainId)).status, 403);
 });

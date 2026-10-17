@@ -5,6 +5,7 @@ import {
   evaluate, expressionDependencies, isBuiltinFunction, setCustomFunctionResolver,
 } from '../../shared/rule-dsl';
 import { writeAudit } from '../audit/audit-service';
+import { currentDomainId } from '../domains/domain-service';
 
 export interface FunctionInput {
   functionKey: string;
@@ -35,13 +36,15 @@ function mapFunction(row: any) {
 }
 
 export function getFunction(functionKey: string) {
-  const row = getDb().prepare('SELECT * FROM function_def WHERE function_key = ?').get(functionKey) as any;
+  const row = getDb().prepare('SELECT * FROM function_def WHERE function_key = ? AND domain_id = ?')
+    .get(functionKey, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `函数不存在: ${functionKey}`);
   return mapFunction(row);
 }
 
 export function listFunctions() {
-  return (getDb().prepare('SELECT * FROM function_def ORDER BY function_key').all() as any[]).map(mapFunction);
+  return (getDb().prepare('SELECT * FROM function_def WHERE domain_id = ? ORDER BY function_key')
+    .all(currentDomainId()) as any[]).map(mapFunction);
 }
 
 function references(functionKey: string): string[] {
@@ -92,6 +95,7 @@ export function upsertFunction(input: FunctionInput, actor: string) {
 
   const db = getDb();
   const existing = db.prepare('SELECT * FROM function_def WHERE function_key = ?').get(key) as any;
+  if (existing && existing.domain_id !== currentDomainId()) throw new AppError('CONFLICT', '函数标识已被其他领域使用');
   if (existing) {
     const previous = JSON.parse(existing.parameters_json) as string[];
     if ((JSON.stringify(previous) !== JSON.stringify(parameters) || existing.output_type !== (input.outputType ?? 'number')) &&
@@ -105,9 +109,9 @@ export function upsertFunction(input: FunctionInput, actor: string) {
     );
   } else {
     db.prepare(`INSERT INTO function_def (function_key, name, description, parameters_json, expression,
-      output_type, version, state, created_at, updated_at) VALUES (?,?,?,?,?,?,1,'published',?,?)`).run(
+      output_type, version, state, created_at, updated_at, domain_id) VALUES (?,?,?,?,?,?,1,'published',?,?,?)`).run(
       key, input.name.trim(), input.description ?? '', JSON.stringify(parameters), input.expression.trim(),
-      input.outputType ?? 'number', nowIso(), nowIso(),
+      input.outputType ?? 'number', nowIso(), nowIso(), currentDomainId(),
     );
   }
   writeAudit({ actor, eventType: 'function.upserted', resourceType: 'function_def', resourceId: key,

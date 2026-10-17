@@ -9,6 +9,7 @@ import { AuthUser } from '../auth/auth-service';
 import { createCase } from '../decision/decision-service';
 import { getRule } from '../rules/rule-service';
 import { executeAction, getActionType } from '../actions/action-service';
+import { currentDomainId } from '../domains/domain-service';
 
 const ruleSchema = z.object({
   id: z.string().optional(),
@@ -81,18 +82,21 @@ export function upsertAutomation(input: unknown, actor: AuthUser) {
   if (value.effect.type === 'execute_action') assertAutomationActionSafe(value.effect.actionKey);
   const db = getDb();
   const id = value.id ?? newId('auto');
-  const old = db.prepare('SELECT id FROM automation_rule WHERE id = ?').get(id);
+  const old = db.prepare('SELECT id FROM automation_rule WHERE id = ? AND domain_id = ?').get(id, currentDomainId());
+  if (!old && db.prepare('SELECT 1 FROM automation_rule WHERE id = ?').get(id)) {
+    throw new AppError('CONFLICT', '自动化标识已被其他领域使用');
+  }
   if (old) {
     db.prepare(`UPDATE automation_rule SET name = ?, condition_json = ?, effect_json = ?,
-      enabled = ?, updated_at = ? WHERE id = ?`).run(value.name,
+      enabled = ?, updated_at = ? WHERE id = ? AND domain_id = ?`).run(value.name,
       JSON.stringify({ typeKey: value.typeKey, expression: value.expression ?? '', ruleKey: value.ruleKey ?? '' }),
-      JSON.stringify(value.effect), value.enabled ? 1 : 0, nowIso(), id);
+      JSON.stringify(value.effect), value.enabled ? 1 : 0, nowIso(), id, currentDomainId());
   } else {
     db.prepare(`INSERT INTO automation_rule
-      (id, name, trigger_type, condition_json, effect_json, enabled, created_at, updated_at)
-      VALUES (?,?,'object_change',?,?,?,?,?)`).run(id, value.name,
+      (id, name, trigger_type, condition_json, effect_json, enabled, created_at, updated_at, domain_id)
+      VALUES (?,?,'object_change',?,?,?,?,?,?)`).run(id, value.name,
       JSON.stringify({ typeKey: value.typeKey, expression: value.expression ?? '', ruleKey: value.ruleKey ?? '' }),
-      JSON.stringify(value.effect), value.enabled ? 1 : 0, nowIso(), nowIso());
+      JSON.stringify(value.effect), value.enabled ? 1 : 0, nowIso(), nowIso(), currentDomainId());
   }
   writeAudit({ actor: actor.username, eventType: old ? 'automation.updated' : 'automation.created',
     resourceType: 'automation_rule', resourceId: id, after: value });
@@ -100,7 +104,7 @@ export function upsertAutomation(input: unknown, actor: AuthUser) {
 }
 
 export function getAutomation(id: string) {
-  const row = getDb().prepare('SELECT * FROM automation_rule WHERE id = ?').get(id) as any;
+  const row = getDb().prepare('SELECT * FROM automation_rule WHERE id = ? AND domain_id = ?').get(id, currentDomainId()) as any;
   if (!row) throw new AppError('NOT_FOUND', `自动化规则不存在: ${id}`);
   return {
     id: row.id, name: row.name, triggerType: row.trigger_type,
@@ -110,15 +114,15 @@ export function getAutomation(id: string) {
 }
 
 export function listAutomations() {
-  return (getDb().prepare('SELECT id FROM automation_rule ORDER BY created_at DESC').all() as any[])
+  return (getDb().prepare('SELECT id FROM automation_rule WHERE domain_id = ? ORDER BY created_at DESC').all(currentDomainId()) as any[])
     .map((r) => getAutomation(r.id));
 }
 
 export function listAutomationRuns(ruleId?: string) {
   const db = getDb();
   const rows = ruleId
-    ? db.prepare('SELECT * FROM automation_run WHERE rule_id = ? ORDER BY created_at DESC').all(ruleId)
-    : db.prepare('SELECT * FROM automation_run ORDER BY created_at DESC LIMIT 100').all();
+    ? db.prepare('SELECT * FROM automation_run WHERE rule_id = ? AND domain_id = ? ORDER BY created_at DESC').all(ruleId, currentDomainId())
+    : db.prepare('SELECT * FROM automation_run WHERE domain_id = ? ORDER BY created_at DESC LIMIT 100').all(currentDomainId());
   return (rows as any[]).map((r) => ({ id: r.id, ruleId: r.rule_id, objectId: r.object_id,
     objectRevision: r.object_revision, effectType: r.effect_type, status: r.status,
     result: JSON.parse(r.result_json || '{}'), createdAt: r.created_at }));
@@ -126,9 +130,9 @@ export function listAutomationRuns(ruleId?: string) {
 
 export function processObjectChange(objectId: string) {
   const db = getDb();
-  const object = db.prepare('SELECT * FROM object_instance WHERE object_id = ? AND deleted = 0').get(objectId) as any;
+  const object = db.prepare('SELECT * FROM object_instance WHERE object_id = ? AND deleted = 0 AND domain_id = ?').get(objectId, currentDomainId()) as any;
   if (!object) return [];
-  const rules = db.prepare("SELECT * FROM automation_rule WHERE trigger_type = 'object_change' AND enabled = 1").all() as any[];
+  const rules = db.prepare("SELECT * FROM automation_rule WHERE trigger_type = 'object_change' AND enabled = 1 AND domain_id = ?").all(currentDomainId()) as any[];
   const results: unknown[] = [];
   for (const rule of rules) {
     const condition = JSON.parse(rule.condition_json || '{}');
@@ -144,8 +148,8 @@ export function processObjectChange(objectId: string) {
       const runId = old?.id ?? newId('arun');
       if (!old) {
         db.prepare(`INSERT INTO automation_run
-          (id, rule_id, object_id, object_revision, effect_type, status, result_json, created_at)
-          VALUES (?,?,?,?,?,'pending','{}',?)`).run(runId, rule.id, objectId, object.revision, effect.type, nowIso());
+          (id, rule_id, object_id, object_revision, effect_type, status, result_json, created_at, domain_id)
+          VALUES (?,?,?,?,?,'pending','{}',?,?)`).run(runId, rule.id, objectId, object.revision, effect.type, nowIso(), currentDomainId());
       }
       let result: unknown;
       if (effect.type === 'create_case') {

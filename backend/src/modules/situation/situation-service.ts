@@ -1,5 +1,6 @@
 // Situation Engine：事实快照、规则计算、冲突及新鲜度
 import { getDb, nowIso } from '../../db/database';
+import { currentDomainId } from '../domains/domain-service';
 import { newId } from '../../shared/ids';
 import { AppError } from '../../shared/errors';
 import { getNeighborhood, getObject } from '../objects/object-service';
@@ -183,11 +184,11 @@ export function buildSituationSnapshot(input: OrientInput): SituationSnapshot {
     for (const o of objects) {
       if (o.redacted) continue;
       db.prepare(`INSERT OR REPLACE INTO case_object
-        (id, case_id, object_id, role, frozen_revision, frozen_payload_json, created_at)
-        VALUES (?,?,?,?,?,?,?)`).run(
+        (id, case_id, object_id, role, frozen_revision, frozen_payload_json, created_at, domain_id)
+        VALUES (?,?,?,?,?,?,?,?)`).run(
         newId('cobj'), input.caseId, o.objectId,
         o.objectId === input.rootObjectId ? 'trigger' : 'related',
-        o.revision, JSON.stringify(o.payload ?? {}), nowIso()
+        o.revision, JSON.stringify(o.payload ?? {}), nowIso(), currentDomainId()
       );
     }
     writeAudit({
