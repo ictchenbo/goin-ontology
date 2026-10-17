@@ -7,6 +7,8 @@ deploy/backups/
 *.db-*
 *.sqlite*
 *.tsbuildinfo
+__pycache__/
+*.pyc
 .env
 .env.*
 !.env.example
