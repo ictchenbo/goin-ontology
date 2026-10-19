@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2100" height="1600" viewBox="0 0 2100 1600" style="max-width:100%;height:auto" role="img" aria-labelledby="title description">
   <title id="title">OODA 本体模型概念关系图</title>
-  <desc id="description">应用领域隔离本体定义、对象实例及决策数据，用户先选择有权访问的领域。每种概念只出现一次。定义关系连接 Interface、共享属性、对象类型、普通属性、只读计算属性、关系类型和决策类型；逻辑关系连接函数、规则、自动化与 Action；对象实例汇合计算结果与执行效果，再关联关系实例、证据和决策案例。关系类型约束基数与自环许可，自环默认禁止；计算结果在读取时产生，不写入实例。</desc>
+  <desc id="description">应用领域隔离本体定义、对象实例及决策数据，用户先选择有权访问的领域。每种概念只出现一次。定义关系连接 Interface、共享属性、对象类型、普通属性、只读计算属性、关系类型和决策类型。对象变化使自动化检查条件；自动化可引用独立定义的触发规则，并可调用独立定义的 Action；决策案例也可调用 Action。Action 校验后修改对象实例。对象实例关联关系实例、证据和决策案例。关系类型约束基数与自环许可，自环默认禁止；计算结果在读取时产生，不写入实例。</desc>
   <defs>
     <linearGradient id="background" x2="1" y2="1"><stop stop-color="#f9fbff"/><stop offset="1" stop-color="#f0f5ff"/></linearGradient>
     <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#5579c5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
@@ -31,7 +31,7 @@
 
   <rect width="2100" height="1600" fill="url(#background)"/>
   <text class="title" x="62" y="68">OODA 本体模型 · 概念关系</text>
-  <text class="subtitle" x="64" y="105">每种概念只出现一次；箭头表示定义、调用或实例化关系，蓝色强调只读计算路径。</text>
+  <text class="subtitle" x="64" y="105">每种概念只出现一次；箭头表示触发、引用、调用或实例化关系，蓝色强调只读计算路径。</text>
   <g id="node-application-domain" class="node node-def">
     <rect x="64" y="119" width="1170" height="39" rx="12" fill="#fff" stroke="#a9c3f3"/>
     <text class="node-sub" x="83" y="145">应用领域：管理员创建并授权成员；当前领域自动附加 domain_id，隔离下方定义与运行数据</text>
@@ -51,14 +51,15 @@
     <path class="edge edge-def" data-from="shared-property" data-to="property" d="M340 405 H410"/><text class="edge-label" x="360" y="391">引用</text>
     <path class="edge edge-def" data-from="property" data-to="computed-property" d="M680 405 H850"/><text class="edge-label" x="724" y="391">作为输入</text>
     <path class="edge edge-compute" data-from="function" data-to="computed-property" d="M1320 355 V295 H990 V355"/><text class="edge-label" x="1100" y="281">函数求值</text>
-    <path class="edge edge-logic" data-from="function" data-to="rule" d="M1450 405 H1510"/><text class="edge-label" x="1464" y="391">调用</text>
-    <path class="edge edge-logic" data-from="rule" data-to="automation" d="M1750 405 H1810"/><text class="edge-label" x="1766" y="391">触发</text>
-    <path class="edge edge-logic" data-from="automation" data-to="action" d="M1930 455 V735"/><text class="edge-label" x="1950" y="606">执行动作</text>
+    <path class="edge edge-logic" data-from="rule" data-to="function" d="M1510 405 H1450"/><text class="edge-label" x="1457" y="391">可调用</text>
+    <path class="edge edge-logic" data-from="automation" data-to="rule" d="M1930 355 V260 H1630 V355"/><text class="edge-label" x="1736" y="246">可引用触发规则</text>
+    <path class="edge edge-logic" data-from="automation" data-to="action" d="M1930 455 V735"/><text class="edge-label" x="1950" y="606">可调用 Action</text>
 
     <path class="edge edge-def" data-from="interface" data-to="object-type" d="M340 785 H410"/><text class="edge-label" x="360" y="771">实现</text>
     <path class="edge edge-def" data-from="object-type" data-to="property" d="M545 735 V455"/><text class="edge-label" x="565" y="606">定义属性</text>
     <path class="edge edge-def" data-from="object-type" data-to="object-instance" d="M680 785 H850"/><text class="edge-label" x="737" y="771">实例化</text>
     <path class="edge edge-compute" data-from="computed-property" data-to="object-instance" d="M990 455 V735"/><text class="edge-label" x="1011" y="606">读取时附加结果</text>
+    <path class="edge edge-logic" data-from="object-instance" data-to="automation" d="M1130 755 H1150 V520 H1790 V405 H1810"/><text class="edge-label" x="1215" y="506">对象变化触发条件检查</text>
     <path class="edge edge-logic" data-from="action" data-to="object-instance" d="M1810 785 H1130"/><text class="edge-label" x="1430" y="771">修改实例</text>
 
     <path class="edge edge-def" data-from="link-type" data-to="link-instance" d="M340 1180 H410"/><text class="edge-label" x="360" y="1166">约束</text>
@@ -66,6 +67,7 @@
     <path class="edge edge-runtime" data-from="object-instance" data-to="evidence" d="M1080 835 V1000 H1355 V1130"/><text class="edge-label" x="1181" y="986">附着证据</text>
     <path class="edge edge-runtime" data-from="object-instance" data-to="decision-case" d="M990 835 V1410"/><text class="edge-label" x="1012" y="1337">作为决策上下文</text>
     <path class="edge edge-def" data-from="decision-type" data-to="decision-case" d="M680 1460 H850"/><text class="edge-label" x="734" y="1446">定义流程</text>
+    <path class="edge edge-logic" data-from="decision-case" data-to="action" d="M1170 1460 H1930 V835"/><text class="edge-label" x="1730" y="1446">决策执行可调用</text>
   </g>
 
   <!-- 定义层：每个概念对应一个节点。 -->
@@ -96,13 +98,13 @@
     <rect width="260" height="100" rx="15"/><text class="node-title" x="20" y="41">函数 Function</text><text class="node-sub" x="20" y="72">可复用的表达式计算</text>
   </g>
   <g id="node-rule" class="node node-logic" transform="translate(1510 355)">
-    <rect width="240" height="100" rx="15"/><text class="node-title" x="20" y="41">规则 Rule</text><text class="node-sub" x="20" y="72">指标、约束、触发与评分</text>
+    <rect width="240" height="100" rx="15"/><text class="node-title" x="20" y="41">规则 Rule</text><text class="node-sub" x="20" y="72">指标、约束、触发与评分</text><text class="node-sub" x="20" y="90">独立定义，可被引用</text>
   </g>
   <g id="node-automation" class="node node-logic" transform="translate(1810 355)">
-    <rect width="240" height="100" rx="15"/><text class="node-title" x="20" y="41">自动化</text><text class="node-sub" x="20" y="72">监听变化并评估条件</text>
+    <rect width="240" height="100" rx="15"/><text class="node-title" x="20" y="41">自动化</text><text class="node-sub" x="20" y="72">对象类型、条件与效果</text><text class="node-sub" x="20" y="90">当前监听对象变化</text>
   </g>
   <g id="node-action" class="node node-logic" transform="translate(1810 735)">
-    <rect width="240" height="100" rx="15"/><text class="node-title" x="20" y="41">Action</text><text class="node-sub" x="20" y="72">校验并执行受控效果</text>
+    <rect width="240" height="100" rx="15"/><text class="node-title" x="20" y="41">Action</text><text class="node-sub" x="20" y="72">校验后受控写入</text><text class="node-sub" x="20" y="90">独立定义，可由人工调用</text>
   </g>
 
   <!-- 运行层 -->

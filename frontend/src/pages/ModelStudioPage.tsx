@@ -14,13 +14,13 @@ import { ObjectTypePicker } from './ObjectEditorDialog';
 
 type Tab = 'types' | 'shared' | 'links' | 'actions' | 'rules' | 'functions' | 'interfaces' | 'automations';
 const TABS: Array<{ key: Tab; label: string }> = [
-  { key: 'types', label: '对象类型与属性' },
   { key: 'shared', label: '共享属性' },
-  { key: 'links', label: '关系 Link' },
-  { key: 'actions', label: 'Action' },
-  { key: 'rules', label: '规则' },
+  { key: 'interfaces', label: '接口' },
   { key: 'functions', label: '函数' },
-  { key: 'interfaces', label: 'Interface' },
+  { key: 'types', label: '对象类型' },
+  { key: 'links', label: '关系' },
+  { key: 'rules', label: '规则' },
+  { key: 'actions', label: '动作' },
   { key: 'automations', label: '自动化' },
 ];
 const TYPE_CATEGORIES = [
