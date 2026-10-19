@@ -9,9 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Alert } from '@/components/ui/Alert';
 
 const DOMAIN_IMAGES: Record<string, string> = {
-  'public-safety': '/images/domain-public-safety.png',
-  battlefield: '/images/domain-battlefield.png',
-  'political-security': '/images/domain-political-security.png',
+  'public-safety': '/images/domain-public-safety.png?v=2',
+  battlefield: '/images/domain-battlefield.png?v=2',
+  'political-security': '/images/domain-political-security.png?v=2',
 };
 
 export function DomainSelectPage() {
