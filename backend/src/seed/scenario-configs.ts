@@ -621,6 +621,7 @@ const military: ScenarioPack = {
     { linkKey: 'aircraft_uses_weapon', displayName: '军机配备装备', fromType: 'MilitaryAircraft', toType: 'WeaponSystem', cardinality: 'N:M' },
     { linkKey: 'warship_uses_weapon', displayName: '军舰配备装备', fromType: 'Warship', toType: 'WeaponSystem', cardinality: 'N:M' },
     { linkKey: 'aircraft_activity_involves_aircraft', displayName: '军机事件涉及军机', fromType: 'AircraftActivity', toType: 'MilitaryAircraft', cardinality: 'N:M' },
+    { linkKey: 'aircraft_activity_at_warship', displayName: '军机事件发生于军舰', fromType: 'AircraftActivity', toType: 'Warship', cardinality: 'N:1' },
     { linkKey: 'warship_activity_involves_warship', displayName: '军舰事件涉及军舰', fromType: 'WarshipActivity', toType: 'Warship', cardinality: 'N:M' },
     { linkKey: 'aircraft_activity_at_airfield', displayName: '军机事件发生于机场', fromType: 'AircraftActivity', toType: 'MilitaryAirfield', cardinality: 'N:1' },
     { linkKey: 'warship_activity_at_port', displayName: '军舰事件发生于港口', fromType: 'WarshipActivity', toType: 'MilitaryPort', cardinality: 'N:1' },

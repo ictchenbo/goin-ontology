@@ -4,6 +4,7 @@ import { runMigrations } from '../db/migrate';
 import { runInDomain } from '../modules/domains/domain-service';
 import { createLink, createObject } from '../modules/objects/object-service';
 import { attachEvidence, recordSource } from '../modules/sources/source-service';
+import { syncBattlefieldModel } from './sync-battlefield-model';
 import { links, objects, sources, type SourceKey } from './us-military-public-samples';
 
 const actor = 'public-data-seed';
@@ -16,8 +17,13 @@ export function seedUsMilitaryPublicSamples(dryRun = false) {
     .get() as { id: string } | undefined;
   if (!domain) throw new Error('战场态势应用领域不存在或已归档');
 
-  const counts = { sources: 0, objects: 0, evidence: 0, links: 0 };
-  const apply = db.transaction(() => runInDomain(domain.id, () => {
+  const counts = { modelTypes: 0, modelLinks: 0, sources: 0, objects: 0, evidence: 0, links: 0 };
+  const apply = db.transaction(() => {
+    // 与数据导入共用外层事务，预演时一并回滚缺失的模型定义。
+    const model = syncBattlefieldModel();
+    counts.modelTypes = model.createdTypes.length;
+    counts.modelLinks = model.createdLinks.length;
+    runInDomain(domain.id, () => {
     const observedAt = new Date().toISOString();
     const sourceIds = {} as Record<SourceKey, string>;
     for (const [key, source] of Object.entries(sources) as Array<[SourceKey, typeof sources[SourceKey]]>) {
@@ -70,7 +76,8 @@ export function seedUsMilitaryPublicSamples(dryRun = false) {
       counts.links++;
     }
     if (dryRun) throw new DryRunRollback();
-  }));
+    });
+  });
 
   try {
     apply();
