@@ -119,6 +119,7 @@
     <rect width="320" height="100" rx="15"/><text class="node-title" x="20" y="41">决策案例</text><text class="node-sub" x="20" y="72">基于对象上下文形成决策记录</text>
   </g>
 
-  <rect x="54" y="1554" width="1992" height="30" rx="8" fill="#e5ecf8"/>
-  <text class="note" x="76" y="1575">示例：出生日期 → 周岁函数（按业务时区取今天）→ 年龄；计算结果不入库，下次读取重新计算。</text>
+  <rect x="54" y="1537" width="1992" height="49" rx="8" fill="#e5ecf8"/>
+  <text class="note" x="76" y="1556">示例：出生日期 → 周岁函数（按业务时区取今天）→ 年龄；计算结果不入库，下次读取重新计算。</text>
+  <text class="note" x="76" y="1577">战场态势：军机 → 机场/装备，军舰 → 港口/装备；活动事件 → 军机/军舰/区域；情报报告 → 活动事件。</text>
 </svg>
