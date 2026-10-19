@@ -18,6 +18,7 @@ import { AuditPage } from './pages/AuditPage';
 import { getCurrentDomain } from './lib/domain';
 import { DomainSelectPage } from './pages/DomainSelectPage';
 import { DomainAdminPage, DomainDetailPage } from './pages/DomainAdminPage';
+import { OntologyGraphPage } from './pages/OntologyGraphPage';
 
 /** 受保护路由包装 */
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -53,6 +54,7 @@ export default function App() {
         <Route path="ontology" element={<ModelStudioPage />} />
         <Route path="ontology/types" element={<ModelStudioPage />} />
         <Route path="ontology/types/:typeKey" element={<ObjectTypeDetailPage />} />
+        <Route path="ontology/graph" element={<OntologyGraphPage />} />
         <Route path="ontology/:module" element={<ModelStudioPage />} />
         <Route path="ontology/:module/:itemKey" element={<ModelModuleDetailPage />} />
         <Route path="objects" element={<ObjectsPage />} />

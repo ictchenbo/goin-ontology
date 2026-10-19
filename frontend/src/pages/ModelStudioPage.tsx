@@ -107,10 +107,10 @@ export function ModelStudioPage() {
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h1 className="text-2xl font-bold">本体模型管理</h1>
         <p className="mt-1 text-sm text-muted-foreground">管理类型属性、关系、动作、规则、函数和接口定义。</p></div>
-      <a href="/ontology-concepts.svg" target="_blank" rel="noopener noreferrer"
+      <Link to="/ontology/graph"
         className="rounded-md border border-border px-3 py-2 text-sm font-medium text-primary hover:bg-muted">
-        查看概念关系图 <span className="sr-only">（新窗口打开）</span>
-      </a>
+        查看概念关系图
+      </Link>
     </div>
     <div role="tablist" aria-label="模型配置类别" className="flex flex-wrap gap-2 border-b border-border pb-3">
       {TABS.map((item) => <Button key={item.key} role="tab" aria-selected={tab === item.key}
@@ -914,8 +914,7 @@ export function ObjectTypeDetailPage() {
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div><Link to="/ontology/types" className="text-sm text-primary hover:underline">← 返回对象类型列表</Link>
         <h1 className="mt-2 text-2xl font-bold">对象类型及属性</h1></div>
-      <a href="/ontology-concepts.svg" target="_blank" rel="noopener noreferrer"
-        className="text-sm font-medium text-primary hover:underline">查看概念关系图</a>
+      <Link to="/ontology/graph" className="text-sm font-medium text-primary hover:underline">查看概念关系图</Link>
     </div>
     {typeKey && <TypeManager typeKey={typeKey} canEdit={hasRole('admin', 'analyst')} canDelete={hasRole('admin')} />}
   </div>;
