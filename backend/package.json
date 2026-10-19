@@ -11,6 +11,7 @@
     "migrate": "tsx src/db/migrate.ts",
     "seed": "tsx src/seed/seed.ts",
     "sync:battlefield-model": "tsx src/seed/sync-battlefield-model.ts",
+    "seed:us-military-samples": "tsx src/seed/seed-us-military-public-samples.ts",
     "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
