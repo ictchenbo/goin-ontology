@@ -359,12 +359,25 @@ test('供应链案例从事实到结果并可回放', async () => {
   assert.ok(scored.data.ranking.length >= 3);
   const selected = scored.data.ranking.find((item: any) => item.feasible && item.name === '跨仓调拨');
   assert.ok(selected, JSON.stringify(scored.data.ranking));
+  const garbledDecision = await request('POST', `/cases/${caseId}/decision`, 'analyst', {
+    selectedAlternativeId: selected.alternativeId, rationale: '依据\uFFFD已损坏',
+  });
+  assert.equal(garbledDecision.status, 400);
+  assert.match(garbledDecision.data.error.message, /UTF-8/);
   const decision = await request('POST', `/cases/${caseId}/decision`, 'analyst', {
     selectedAlternativeId: selected.alternativeId, rationale: '交期与风险综合较优', dissent: '成本增加',
   });
   assert.equal(decision.status, 201, JSON.stringify(decision.data));
+  const garbledRequest = await request('POST', `/cases/${caseId}/approvals`, 'analyst', {
+    alternativeId: selected.alternativeId, comment: '审批\uFFFD备注',
+  });
+  assert.equal(garbledRequest.status, 400);
   const approval = await request('POST', `/cases/${caseId}/approvals`, 'analyst', { alternativeId: selected.alternativeId });
   assert.equal(approval.status, 201, JSON.stringify(approval.data));
+  const garbledApproval = await request('POST', `/approvals/${approval.data.id}/decide`, 'approver', {
+    decision: 'approved', comment: '审批\uFFFD意见',
+  });
+  assert.equal(garbledApproval.status, 400);
   const approved = await request('POST', `/approvals/${approval.data.id}/decide`, 'approver', { decision: 'approved' });
   assert.equal(approved.status, 200, JSON.stringify(approved.data));
   const chosen = detail.data.alternatives.find((item: any) => item.id === selected.alternativeId).proposedActions[0];

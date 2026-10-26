@@ -30,6 +30,13 @@ const STATE_TRANSITIONS: Record<string, string[]> = {
 
 export const CASE_STATES = Object.keys(STATE_TRANSITIONS);
 
+// 拒绝已经丢失原文的编码替换字符，避免决策与审批记录写入乱码。
+function assertReadableText(value: unknown, field: string): void {
+  if (typeof value === 'string' && value.includes('\uFFFD')) {
+    throw new AppError('VALIDATION_ERROR', `${field}包含乱码替换字符，请检查输入编码并使用 UTF-8 重试`);
+  }
+}
+
 export function assertTransition(from: string, to: string): void {
   const allowed = STATE_TRANSITIONS[from] ?? [];
   if (!allowed.includes(to)) {
@@ -833,6 +840,8 @@ export function recordDecision(input: {
   dissent?: string;
   actor: AuthUser;
 }) {
+  assertReadableText(input.rationale, '决策理由');
+  assertReadableText(input.dissent, '不同意见');
   const db = getDb();
   const c = db.prepare('SELECT * FROM decision_case WHERE id = ?').get(input.caseId) as any;
   if (!c) throw new AppError('NOT_FOUND', `案例不存在: ${input.caseId}`);
@@ -891,6 +900,7 @@ export function requestApproval(input: {
   actor: AuthUser;
   comment?: string;
 }) {
+  assertReadableText(input.comment, '审批备注');
   const db = getDb();
   const c = db.prepare('SELECT * FROM decision_case WHERE id = ?').get(input.caseId) as any;
   if (!c) throw new AppError('NOT_FOUND', `案例不存在: ${input.caseId}`);
@@ -940,6 +950,7 @@ export function decideApproval(input: {
   comment?: string;
   actor: AuthUser;
 }) {
+  assertReadableText(input.comment, '审批备注');
   const db = getDb();
   const apr = db.prepare('SELECT * FROM approval WHERE id = ?').get(input.approvalId) as any;
   if (!apr) throw new AppError('NOT_FOUND', `审批不存在: ${input.approvalId}`);
