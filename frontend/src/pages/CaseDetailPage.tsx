@@ -11,6 +11,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Table, TBody, TD, TH, THeader, TR } from '@/components/ui/Table';
 import { Input, Label, Select, Textarea } from '@/components/ui/Input';
+import { ActionObjectParams } from '@/components/ActionObjectParams';
 import { formatNum, formatTime } from '@/lib/utils';
 
 interface CriterionDef {
@@ -69,6 +70,7 @@ interface CaseDetail {
     constraints?: Array<{ key: string; name?: string; severity?: string }>;
     requiredFacts?: string[];
     roleMatrix?: Record<string, string[]>;
+    targetObjectType?: string;
   };
   alternatives?: AlternativeView[];
   scores?: ScoreRow[];
@@ -167,6 +169,13 @@ export function CaseDetailPage() {
   const [newAltName, setNewAltName] = useState('');
   const [newAltDesc, setNewAltDesc] = useState('');
   const [newAltParams, setNewAltParams] = useState('{}');
+  const [availableActions, setAvailableActions] = useState<Array<{ actionKey: string; name: string; state: string }>>([]);
+  const proposalDraft = useMemo(() => {
+    try {
+      const parsed = JSON.parse(newAltParams) as Record<string, unknown>;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch { return null; }
+  }, [newAltParams]);
 
   // 权重表单（按决策类型准则动态生成）
   const [weightForm, setWeightForm] = useState<Record<string, number>>({});
@@ -244,6 +253,9 @@ export function CaseDetailPage() {
 
   useEffect(() => {
     load();
+    api.get<{ items: Array<{ actionKey: string; name: string; state: string }> }>('/action-types')
+      .then((result) => setAvailableActions(result.items.filter((item) => item.state === 'published')))
+      .catch(() => setAvailableActions([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caseId]);
 
@@ -632,6 +644,21 @@ export function CaseDetailPage() {
                 <p className="text-xs text-muted-foreground">
                   预测指标 / 拟议动作 JSON（将写入 proposedActions[0]，供评分表达式与执行动作使用）
                 </p>
+                <div className="space-y-1">
+                  <Label htmlFor="new-alt-action">拟议 Action</Label>
+                  <Select id="new-alt-action" value={typeof proposalDraft?.actionKey === 'string' ? proposalDraft.actionKey : ''}
+                    onChange={(event) => setNewAltParams((current) => {
+                      try {
+                        const draft = JSON.parse(current) as Record<string, unknown>;
+                        return JSON.stringify({ ...draft, actionKey: event.target.value, params: {} }, null, 2);
+                      } catch { return JSON.stringify({ actionKey: event.target.value, params: {} }, null, 2); }
+                    })}>
+                    <option value="">选择 Action</option>
+                    {availableActions.map((action) => <option key={action.actionKey} value={action.actionKey}>
+                      {action.name}（{action.actionKey}）
+                    </option>)}
+                  </Select>
+                </div>
                 <Textarea
                   rows={5}
                   value={newAltParams}
@@ -640,6 +667,19 @@ export function CaseDetailPage() {
                   aria-label="方案预测指标 JSON"
                   placeholder='{"actionKey":"sc_transfer_inventory","serviceScore":82,"costScore":64,"riskScore":85,"params":{"quantity":400}}'
                 />
+                {proposalDraft && typeof proposalDraft.actionKey === 'string' && proposalDraft.actionKey &&
+                  <ActionObjectParams actionKey={proposalDraft.actionKey}
+                    params={proposalDraft.params && typeof proposalDraft.params === 'object' && !Array.isArray(proposalDraft.params)
+                      ? proposalDraft.params as Record<string, unknown> : {}}
+                    targetTypeKey={detail.decisionType?.targetObjectType}
+                    onChange={(key, objectId) => setNewAltParams((current) => {
+                      try {
+                        const draft = JSON.parse(current) as Record<string, unknown>;
+                        const params = draft.params && typeof draft.params === 'object' && !Array.isArray(draft.params)
+                          ? draft.params as Record<string, unknown> : {};
+                        return JSON.stringify({ ...draft, params: { ...params, [key]: objectId } }, null, 2);
+                      } catch { return current; }
+                    })} />}
                 <Button
                   size="sm"
                   disabled={busy || !newAltName.trim()}

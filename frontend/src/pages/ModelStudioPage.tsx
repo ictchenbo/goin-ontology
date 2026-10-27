@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input, Label, Select, Textarea } from '@/components/ui/Input';
+import { ActionObjectParams } from '@/components/ActionObjectParams';
+import { ObjectPicker } from '@/components/ObjectPicker';
 import { Table, TBody, TD, TH, THeader, TR } from '@/components/ui/Table';
 import { formatTime } from '@/lib/utils';
 import { ObjectTypePicker } from './ObjectEditorDialog';
@@ -1235,14 +1237,12 @@ type LinkDef = { linkKey: string; displayName: string; fromType: string; toType:
   cardinality: string; inverseName: string; description: string; required: boolean;
   allowSelfLoop: boolean; state: string };
 type LinkInstance = { linkId: string; linkKey: string; fromObjectId: string; toObjectId: string; isValid: boolean };
-type ObjectOption = { objectId: string; title: string; typeKey: string };
 
 function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boolean; canDelete: boolean }) {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'definition' | 'instances'>('definition');
   const [types, setTypes] = useState<ObjectType[]>([]);
   const [instances, setInstances] = useState<LinkInstance[]>([]);
-  const [objects, setObjects] = useState<ObjectOption[]>([]);
   const [selected, setSelected] = useState('');
   const [savedAllowSelfLoop, setSavedAllowSelfLoop] = useState(false);
   const [form, setForm] = useState<LinkDef>({ linkKey: '', displayName: '', fromType: '', toType: '', cardinality: '1:N', inverseName: '', description: '', required: false, allowSelfLoop: false, state: 'published' });
@@ -1252,13 +1252,13 @@ function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
-    const [a, b, c, d] = await Promise.all([
+    const [a, b, c] = await Promise.all([
       initialKey === 'new' ? Promise.resolve(null) : api.get<LinkDef>(`/ontology/links/${encodeURIComponent(initialKey)}`),
       api.get<{ items: ObjectType[] }>('/ontology/types'),
-      api.get<{ items: LinkInstance[] }>('/links?limit=100'), api.get<{ items: ObjectOption[] }>('/objects?limit=200'),
+      api.get<{ items: LinkInstance[] }>('/links?limit=100'),
     ]);
     if (a) { setSelected(a.linkKey); setForm(a); setSavedAllowSelfLoop(a.allowSelfLoop); }
-    setTypes(b.items); setInstances(c.items); setObjects(d.items);
+    setTypes(b.items); setInstances(c.items);
   }, [initialKey]);
   useEffect(() => { load().catch((e) => setError(message(e))); }, [load]);
   async function run(label: string, task: () => Promise<unknown>) {
@@ -1269,9 +1269,6 @@ function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
   }
   const set = (patch: Partial<LinkDef>) => setForm({ ...form, ...patch });
   const visibleInstances = selected ? instances.filter((x) => x.linkKey === selected) : [];
-  const fromOptions = objects.filter((o) => !form.fromType || o.typeKey === form.fromType);
-  const toOptions = objects.filter((o) => (!form.toType || o.typeKey === form.toType) &&
-    (savedAllowSelfLoop || o.objectId !== fromId));
   return <div className="space-y-4"><Notice error={error} info={info} />
     <div role="tablist" aria-label="关系详情" className="flex flex-wrap gap-2 border-b border-border pb-3">
       <Button role="tab" id="link-tab-definition" aria-selected={activeTab === 'definition'}
@@ -1286,10 +1283,16 @@ function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
         <div className="grid gap-3 md:grid-cols-2">
           <Field label="Link 标识" value={form.linkKey} onChange={(v) => set({ linkKey: v })} disabled={!!selected || !canEdit} />
           <Field label="显示名称" value={form.displayName} onChange={(v) => set({ displayName: v })} disabled={!canEdit} />
-          <div className="space-y-1"><Label htmlFor="link-from-type">起点类型</Label><Select id="link-from-type" value={form.fromType} disabled={!!selected || !canEdit} onChange={(e) => set({ fromType: e.target.value, allowSelfLoop: e.target.value === form.toType && form.allowSelfLoop })}>
+          <div className="space-y-1"><Label htmlFor="link-from-type">起点类型</Label><Select id="link-from-type" value={form.fromType} disabled={!!selected || !canEdit} onChange={(e) => {
+            set({ fromType: e.target.value, allowSelfLoop: e.target.value === form.toType && form.allowSelfLoop });
+            setFromId(''); setToId('');
+          }}>
             <option value="">选择类型</option>{types.map((t) => <option key={t.typeKey} value={t.typeKey}>{t.displayName} ({t.typeKey})</option>)}
           </Select></div>
-          <div className="space-y-1"><Label htmlFor="link-to-type">终点类型</Label><Select id="link-to-type" value={form.toType} disabled={!!selected || !canEdit} onChange={(e) => set({ toType: e.target.value, allowSelfLoop: e.target.value === form.fromType && form.allowSelfLoop })}>
+          <div className="space-y-1"><Label htmlFor="link-to-type">终点类型</Label><Select id="link-to-type" value={form.toType} disabled={!!selected || !canEdit} onChange={(e) => {
+            set({ toType: e.target.value, allowSelfLoop: e.target.value === form.fromType && form.allowSelfLoop });
+            setToId('');
+          }}>
             <option value="">选择类型</option>{types.map((t) => <option key={t.typeKey} value={t.typeKey}>{t.displayName} ({t.typeKey})</option>)}
           </Select></div>
           <div className="space-y-1"><Label htmlFor="link-cardinality">基数</Label><Select id="link-cardinality" value={form.cardinality} disabled={!canEdit} onChange={(e) => set({ cardinality: e.target.value })}>
@@ -1317,14 +1320,10 @@ function LinkManager({ initialKey, canEdit }: { initialKey: string; canEdit: boo
     <Card id="link-panel-instances" role="tabpanel" aria-labelledby="link-tab-instances"
       hidden={activeTab !== 'instances'}><CardHeader><CardTitle>对象连接实例</CardTitle></CardHeader><CardContent className="space-y-4">
       {canEdit && <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-        <div className="space-y-1"><Label htmlFor="link-from-object">起点对象</Label><Select id="link-from-object" value={fromId} onChange={(e) => {
-          setFromId(e.target.value); if (!savedAllowSelfLoop && e.target.value === toId) setToId('');
-        }}><option value="">选择对象</option>
-          {fromOptions.map((o) => <option key={o.objectId} value={o.objectId}>{o.title} ({o.objectId})</option>)}
-        </Select></div>
-        <div className="space-y-1"><Label htmlFor="link-to-object">终点对象</Label><Select id="link-to-object" value={toId} onChange={(e) => setToId(e.target.value)}><option value="">选择对象</option>
-          {toOptions.map((o) => <option key={o.objectId} value={o.objectId}>{o.title} ({o.objectId})</option>)}
-        </Select></div>
+        <ObjectPicker label="起点对象" value={fromId} typeKey={form.fromType}
+          onChange={(value) => { setFromId(value); if (!savedAllowSelfLoop && value === toId) setToId(''); }} />
+        <ObjectPicker label="终点对象" value={toId} typeKey={form.toType}
+          excludeIds={savedAllowSelfLoop ? [] : [fromId]} onChange={setToId} />
         <Button className="self-end" disabled={busy || !selected || !fromId || !toId || (!savedAllowSelfLoop && fromId === toId)}
           onClick={() => run('建立连接', () => api.post('/links', { linkKey: selected, fromObjectId: fromId, toObjectId: toId }))}>建立连接</Button>
       </div>}
@@ -1361,6 +1360,13 @@ function ActionManager({ initialKey, canEdit }: { initialKey: string; canEdit: b
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const previewObjectParams = (() => {
+    try {
+      const parsed = JSON.parse(previewParams) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown> : {};
+    } catch { return {}; }
+  })();
   const load = useCallback(async () => {
     if (initialKey !== 'new') choose(await api.get<ActionDef>(`/action-types/${encodeURIComponent(initialKey)}`));
   }, [initialKey]);
@@ -1417,6 +1423,11 @@ function ActionManager({ initialKey, canEdit }: { initialKey: string; canEdit: b
         </div>
         {selected && <div className="space-y-2 border-t border-border pt-4">
           <Label htmlFor="action-preview">验证参数（JSON）</Label><Textarea id="action-preview" rows={3} className="font-mono text-xs" value={previewParams} onChange={(e) => setPreviewParams(e.target.value)} />
+          <ActionObjectParams actionKey={selected} params={previewObjectParams}
+            onChange={(key, objectId) => setPreviewParams((current) => {
+              try { return json({ ...parseJson<Record<string, unknown>>(current, '验证参数'), [key]: objectId }); }
+              catch { return current; }
+            })} />
           <Button size="sm" variant="outline" disabled={busy} onClick={() => run('验证', async () => {
             const result = await api.post('/actions/validate', { actionKey: selected, params: parseJson(previewParams, '验证参数') }); setPreview(json(result));
           }, false)}>验证 Action</Button>

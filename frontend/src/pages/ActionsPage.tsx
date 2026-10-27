@@ -10,6 +10,7 @@ import { Badge, statusVariant } from '@/components/ui/Badge';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input, Label, Select, Textarea } from '@/components/ui/Input';
+import { ActionObjectParams } from '@/components/ActionObjectParams';
 import { Table, TBody, TD, TH, THeader, TR } from '@/components/ui/Table';
 import { formatTime } from '@/lib/utils';
 
@@ -65,6 +66,13 @@ export function ActionsPage() {
   const [info, setInfo] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const editableParams = (() => {
+    try {
+      const parsed = JSON.parse(paramsText) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown> : {};
+    } catch { return {}; }
+  })();
 
   async function load() {
     setLoading(true);
@@ -189,7 +197,7 @@ export function ActionsPage() {
 
       <Card>
         <CardHeader><CardTitle>执行 Action</CardTitle>
-          <CardDescription>选择已发布 Action，传入真实对象 ID 与参数，先查看验证和写入计划。</CardDescription></CardHeader>
+          <CardDescription>选择已发布 Action，通过对象选择器填写引用参数，再查看验证和写入计划。</CardDescription></CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-2"><Label htmlFor="execute-action">Action</Label>
@@ -212,6 +220,16 @@ export function ActionsPage() {
           <div className="space-y-2"><Label htmlFor="execute-params">参数（JSON）</Label>
             <Textarea id="execute-params" rows={6} className="font-mono text-xs" value={paramsText}
               onChange={(e) => { setParamsText(e.target.value); setPreview(null); }} /></div>
+          <ActionObjectParams actionKey={actionKey} params={editableParams}
+            onChange={(key, objectId) => {
+              setParamsText((current) => {
+                try {
+                  const parsed = JSON.parse(current) as Record<string, unknown>;
+                  return JSON.stringify({ ...parsed, [key]: objectId }, null, 2);
+                } catch { return current; }
+              });
+              setPreview(null);
+            }} />
           <div className="flex gap-2"><Button variant="outline" disabled={busy || !actionKey} onClick={validate}>验证</Button>
             <Button disabled={busy || !actionKey} onClick={execute}>执行</Button></div>
           {preview && <div className="space-y-2 rounded-md border p-3 text-sm">

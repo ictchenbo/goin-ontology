@@ -9,6 +9,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Table, TBody, TD, TH, THeader, TR } from '@/components/ui/Table';
 import { Input, Label, Select, Textarea } from '@/components/ui/Input';
+import { ObjectPicker } from '@/components/ObjectPicker';
 import { formatTime } from '@/lib/utils';
 import { ObjectEditorDialog, ObjectInstance, ObjectType } from './ObjectEditorDialog';
 
@@ -16,7 +17,6 @@ type Attachment = { id: string; filename: string; byteSize: number };
 type LinkDef = { linkKey: string; displayName: string; fromType: string; toType: string;
   cardinality: string; allowSelfLoop: boolean; state: string };
 type ObjectLink = NonNullable<ObjectInstance['links']>[number];
-type ObjectOption = { objectId: string; title: string; typeKey: string };
 const noTypes: ObjectType[] = [];
 
 function LinkEditorDialog({ open, object, link, definitions, onClose, onSaved }: {
@@ -29,8 +29,6 @@ function LinkEditorDialog({ open, object, link, definitions, onClose, onSaved }:
   const [linkKey, setLinkKey] = useState('');
   const [direction, setDirection] = useState<'outgoing' | 'incoming'>('outgoing');
   const [otherId, setOtherId] = useState('');
-  const [query, setQuery] = useState('');
-  const [options, setOptions] = useState<ObjectOption[]>([]);
   const [propsText, setPropsText] = useState('{}');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -46,23 +44,10 @@ function LinkEditorDialog({ open, object, link, definitions, onClose, onSaved }:
       setLinkKey(initialKey);
       setDirection(link?.direction === 'incoming' ? 'incoming' : initialDef?.fromType === object?.typeKey ? 'outgoing' : 'incoming');
       setOtherId(link?.otherObject?.objectId || '');
-      setQuery(''); setOptions([]); setPropsText(JSON.stringify(link?.props || {}, null, 2)); setError('');
+      setPropsText(JSON.stringify(link?.props || {}, null, 2)); setError('');
       if (!dialog.current?.open) dialog.current?.showModal();
     } else if (dialog.current?.open) dialog.current.close();
   }, [open, link, object, definitions]);
-
-  const searchObjects = useCallback(async (typeKey: string, text: string, allowSelfLoop: boolean) => {
-    if (!typeKey) { setOptions([]); return; }
-    try {
-      const params = new URLSearchParams({ typeKey, limit: '30' });
-      if (text.trim()) params.set('text', text.trim());
-      const result = await api.get<{ items: ObjectOption[] }>(`/objects?${params}`);
-      setOptions(result.items.filter((item) => allowSelfLoop || item.objectId !== object?.objectId));
-    } catch (failure) { setError((failure as ApiError).message || '搜索关联对象失败'); }
-  }, [object?.objectId]);
-  useEffect(() => {
-    if (open && targetType) void searchObjects(targetType, '', !!definition?.allowSelfLoop);
-  }, [open, targetType, definition?.allowSelfLoop, searchObjects]);
 
   async function save() {
     if (!object || !definition || !otherId) { setError('请选择关系定义和关联对象'); return; }
@@ -93,7 +78,7 @@ function LinkEditorDialog({ open, object, link, definitions, onClose, onSaved }:
           <Select id="link-definition" value={linkKey} onChange={(event) => {
             const next = compatible.find((item) => item.linkKey === event.target.value);
             setLinkKey(event.target.value); setDirection(next?.fromType === object?.typeKey ? 'outgoing' : 'incoming');
-            setOtherId(''); setQuery('');
+            setOtherId('');
           }}>{compatible.map((item) => <option key={item.linkKey} value={item.linkKey}>
             {item.displayName} ({item.fromType} → {item.toType})
           </option>)}</Select></div>
@@ -101,19 +86,8 @@ function LinkEditorDialog({ open, object, link, definitions, onClose, onSaved }:
           <Select id="link-direction" value={direction} onChange={(event) => {
             setDirection(event.target.value as 'outgoing' | 'incoming'); setOtherId('');
           }}><option value="outgoing">当前对象为起点</option><option value="incoming">当前对象为终点</option></Select></div>}
-        <div className="space-y-1"><Label htmlFor="link-object-search">搜索{targetType}对象</Label>
-          <div className="flex gap-2"><Input id="link-object-search" value={query} onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void searchObjects(targetType || '', query, !!definition?.allowSelfLoop); } }}
-            placeholder="输入标题或属性关键词" />
-            <Button variant="outline" onClick={() => void searchObjects(targetType || '', query, !!definition?.allowSelfLoop)}>搜索</Button></div></div>
-        <div className="space-y-1"><Label htmlFor="link-target">关联对象</Label>
-          <Select id="link-target" value={otherId} onChange={(event) => setOtherId(event.target.value)}>
-            <option value="">请选择对象</option>
-            {link?.otherObject?.objectId && !options.some((item) => item.objectId === link.otherObject?.objectId) &&
-              <option value={link.otherObject.objectId}>{link.otherObject.title || link.otherObject.objectId}</option>}
-            {options.map((item) => <option key={item.objectId} value={item.objectId}>{item.title} ({item.objectId})</option>)}
-          </Select>
-          {!options.length && <p className="text-xs text-muted-foreground">暂无匹配对象，请调整搜索词或先创建目标对象。</p>}</div>
+        <ObjectPicker label="关联对象" value={otherId} onChange={setOtherId} typeKey={targetType} disabled={!open}
+          excludeIds={definition?.allowSelfLoop ? [] : object?.objectId ? [object.objectId] : []} />
         <p className="text-xs text-muted-foreground">此关系{definition?.allowSelfLoop ? '允许' : '不允许'}对象连接自身。</p>
         <div className="space-y-1"><Label htmlFor="link-props">关系属性（JSON）</Label>
           <Textarea id="link-props" value={propsText} onChange={(event) => setPropsText(event.target.value)} rows={3} /></div>

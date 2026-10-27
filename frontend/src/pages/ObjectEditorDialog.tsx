@@ -5,6 +5,7 @@ import { api, ApiError } from '@/lib/api';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Input, Label, Select, Textarea } from '@/components/ui/Input';
+import { ObjectPicker } from '@/components/ObjectPicker';
 
 export interface ObjectInstance {
   objectId: string;
@@ -177,8 +178,12 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
         <Input id="object-title" value={title} onChange={(event) => setTitle(event.target.value)} /></div>
       {type?.typeKey === typeKey && <div className="grid gap-4 sm:grid-cols-2">
         {type.publishedDefinition.properties.filter((property) => !property.computed).map((property) => <div key={property.name} className="space-y-1">
-          <Label htmlFor={`object-${property.name}`}>{property.label || property.name}{property.required ? ' *' : ''}</Label>
-          {property.type === 'boolean' ? <Select id={`object-${property.name}`}
+          {property.type !== 'reference' && <Label htmlFor={`object-${property.name}`}>
+            {property.label || property.name}{property.required ? ' *' : ''}</Label>}
+          {property.type === 'reference' ? <ObjectPicker
+            label={`${property.label || property.name}${property.required ? ' *' : ''}`}
+            value={String(values[property.name] ?? '')} onChange={(selected) => setValue(property.name, selected)}
+            typeKey={property.refType} disabled={!open} /> : property.type === 'boolean' ? <Select id={`object-${property.name}`}
             value={values[property.name] === undefined ? '' : String(values[property.name])}
             onChange={(event) => setValue(property.name, event.target.value === '' ? undefined : event.target.value === 'true')}>
             <option value="">未设置</option><option value="true">是</option><option value="false">否</option>
@@ -192,8 +197,7 @@ export function ObjectEditorDialog({ open, types, item, initialTypeKey, onClose,
             onChange={(event) => setValue(property.name, event.target.value)} rows={3} /> :
             <Input id={`object-${property.name}`} type={property.type === 'number' ? 'number' : 'text'}
               value={String(values[property.name] ?? '')} onChange={(event) => setValue(property.name, event.target.value)}
-              placeholder={property.type === 'datetime' ? '2026-10-11T12:00:00Z' :
-                property.type === 'reference' ? `${property.refType || '对象'} ID` : property.name} />}
+              placeholder={property.type === 'datetime' ? '2026-10-11T12:00:00Z' : property.name} />}
           {property.description && <p className="text-xs text-muted-foreground">{property.description}</p>}
         </div>)}
       </div>}

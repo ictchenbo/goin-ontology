@@ -11,6 +11,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Table, TBody, TD, TH, THeader, TR } from '@/components/ui/Table';
 import { Input, Label, Select } from '@/components/ui/Input';
+import { ObjectPicker } from '@/components/ObjectPicker';
 import { formatTime } from '@/lib/utils';
 
 interface DecisionCase {
@@ -53,8 +54,8 @@ export function CasesPage() {
   const [scenarioKey, setScenarioKey] = useState('supply-chain');
   const [description, setDescription] = useState('');
   const [rootObjectId, setRootObjectId] = useState('');
-  const [objects, setObjects] = useState<Array<{ objectId: string; title: string; typeKey: string }>>([]);
   const [decisionTypes, setDecisionTypes] = useState<Array<{ typeKey: string; displayName?: string; label?: string; targetObjectType?: string }>>([]);
+  const targetObjectType = decisionTypes.find((item) => item.typeKey === decisionTypeKey)?.targetObjectType;
 
   async function load() {
     setLoading(true);
@@ -88,15 +89,6 @@ export function CasesPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
-
-  useEffect(() => {
-    const targetType = decisionTypes.find((item) => item.typeKey === decisionTypeKey)?.targetObjectType;
-    if (!targetType) { setObjects([]); setRootObjectId(''); return; }
-    api.get<{ items: Array<{ objectId: string; title: string; typeKey: string }> }>(
-      `/objects?typeKey=${encodeURIComponent(targetType)}&limit=200`)
-      .then((result) => { setObjects(result.items); setRootObjectId(''); })
-      .catch((e) => setError((e as ApiError)?.message || '加载触发对象失败'));
-  }, [decisionTypeKey, decisionTypes]);
 
   async function handleCreate() {
     setError(null);
@@ -172,7 +164,7 @@ export function CasesPage() {
                     setScenarioKey(key);
                     // 场景包联动默认决策类型
                     const mapped = SCENARIO_DECISION_TYPE[key];
-                    if (mapped) setDecisionTypeKey(mapped);
+                    if (mapped) { setDecisionTypeKey(mapped); setRootObjectId(''); }
                   }}
                 >
                   <option value="supply-chain">供应链中断</option>
@@ -185,7 +177,7 @@ export function CasesPage() {
                 <Select
                   id="decisionTypeKey"
                   value={decisionTypeKey}
-                  onChange={(e) => setDecisionTypeKey(e.target.value)}
+                  onChange={(e) => { setDecisionTypeKey(e.target.value); setRootObjectId(''); }}
                 >
                   <option value="">请选择</option>
                   {decisionTypes.map((t) => (
@@ -200,14 +192,8 @@ export function CasesPage() {
               <Label htmlFor="caseDesc">描述</Label>
               <Input id="caseDesc" value={description} onChange={(e) => setDescription(e.target.value)} />
             </div>
-            <div>
-              <Label htmlFor="rootObjectId">触发对象</Label>
-              <Select id="rootObjectId" value={rootObjectId} onChange={(e) => setRootObjectId(e.target.value)}>
-                <option value="">请选择</option>
-                {objects.map((object) => <option key={object.objectId} value={object.objectId}>
-                  {object.title} · {object.objectId}</option>)}
-              </Select>
-            </div>
+            <ObjectPicker label="触发对象" value={rootObjectId} onChange={setRootObjectId}
+              typeKey={targetObjectType} disabled={!targetObjectType} />
             <Button onClick={handleCreate}>创建</Button>
           </CardContent>
         </Card>
