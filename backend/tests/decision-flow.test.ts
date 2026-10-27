@@ -97,6 +97,51 @@ test('评分：硬约束排除不合格方案', () => {
   }
 });
 
+test('新评分和新快照会使旧决策失效', () => {
+  const cases = db.prepare("SELECT id, snapshot_id FROM decision_case WHERE snapshot_id IS NOT NULL AND state NOT IN ('Closed', 'Cancelled')")
+    .all() as Array<{ id: string; snapshot_id: string }>;
+  const scored = cases.map((item) => {
+    const result = decisionService.scoreAlternatives({
+      caseId: item.id, scenarioRunId: `test-current-${item.id}`, actor: adminUser as never,
+    });
+    return { ...item, result };
+  }).find((item) => item.result.winnerAlternativeId);
+  assert.ok(scored, '至少应存在一个可行的种子案例');
+  const caseId = scored.id;
+  const alternativeId = scored.result.winnerAlternativeId!;
+  db.prepare("UPDATE decision_case SET state = 'OptionsReady' WHERE id = ?").run(caseId);
+  decisionService.createAlternative({
+    caseId, name: '测试新增方案', params: { testMetric: 1 }, actor: adminUser as never,
+  });
+  assert.equal(decisionService.getCase(caseId).scoreRun.current, false);
+  assert.throws(() => decisionService.recordDecision({
+    caseId, selectedAlternativeId: alternativeId, rationale: '新方案未评分', actor: adminUser as never,
+  }), /快照或备选方案已变化/);
+  decisionService.scoreAlternatives({
+    caseId, scenarioRunId: `test-added-alt-${caseId}`, actor: adminUser as never,
+  });
+  decisionService.recordDecision({ caseId, selectedAlternativeId: alternativeId, rationale: '测试评分绑定', actor: adminUser as never });
+
+  decisionService.scoreAlternatives({
+    caseId, scenarioRunId: `test-rescore-${caseId}`, actor: adminUser as never,
+  });
+  assert.throws(() => decisionService.requestApproval({ caseId, alternativeId, actor: adminUser as never }),
+    /评分或决策记录已过期/);
+
+  const newSnapshotId = `test-new-snapshot-${caseId}`;
+  db.prepare(`INSERT INTO case_snapshot
+    (id, case_id, kind, objects_json, links_json, metrics_json, rule_versions_json,
+     conflicts_json, assumptions_json, created_by, created_at)
+    SELECT ?, case_id, kind, objects_json, links_json, metrics_json, rule_versions_json,
+      conflicts_json, assumptions_json, created_by, '2030-01-01T00:00:00.000Z'
+    FROM case_snapshot WHERE id = ?`).run(newSnapshotId, scored.snapshot_id);
+  db.prepare('UPDATE decision_case SET snapshot_id = ? WHERE id = ?').run(newSnapshotId, caseId);
+  assert.equal(decisionService.getCase(caseId).scoreRun.current, false);
+  assert.throws(() => decisionService.recordDecision({
+    caseId, selectedAlternativeId: alternativeId, rationale: '旧评分不可复用', actor: adminUser as never,
+  }), /快照或备选方案已变化/);
+});
+
 test('推演 overlay 不修改正式对象', () => {
   const beforeRow = db
     .prepare('SELECT payload_json FROM object_instance LIMIT 1')

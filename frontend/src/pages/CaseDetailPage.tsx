@@ -76,6 +76,7 @@ interface CaseDetail {
   scores?: ScoreRow[];
   scoreRun?: {
     id: string;
+    current?: boolean;
     winnerAlternativeId?: string | null;
     factsComplete?: boolean;
     missingFacts?: string[];
@@ -85,6 +86,7 @@ interface CaseDetail {
     units?: Record<string, string>;
   };
   decision?: {
+    scoreRunId?: string;
     alternativeId?: string;
     selectedAlternativeId?: string;
     rationale?: string;
@@ -92,6 +94,7 @@ interface CaseDetail {
     createdAt?: string;
   } | null;
   decisionRecord?: {
+    scoreRunId?: string;
     selectedAlternativeId?: string;
     rationale?: string;
     overridden?: boolean;
@@ -200,7 +203,7 @@ export function CaseDetailPage() {
   const [aiKind, setAiKind] = useState('explain');
   const [aiReviewNote, setAiReviewNote] = useState('');
   const [selectedPhase, setSelectedPhase] = useState<PhaseId>('facts');
-  const decisionReady = !!detail?.scoreRun?.winnerAlternativeId
+  const decisionReady = !!detail?.scoreRun?.winnerAlternativeId && detail.scoreRun.current === true
     && detail.facts?.factsComplete !== false && detail.facts?.stale !== true;
   const currentPhase = detail?.state === 'OptionsReady' && decisionReady
     ? 'approval' : phaseForState(detail?.state);
@@ -231,9 +234,21 @@ export function CaseDetailPage() {
       if (d.alternatives?.length) {
         const recorded = d.decision?.alternativeId || d.decision?.selectedAlternativeId
           || d.decisionRecord?.selectedAlternativeId;
-        setSelectedAlt((prev) => recorded
-          || (d.alternatives!.some((alternative) => alternative.id === prev) ? prev : '')
-          || winner || d.alternatives![0].id);
+        const scoredIds = new Set((d.scores ?? []).filter((score) => score.feasible)
+          .map((score) => score.alternativeId));
+        const feasibleIds = new Set(d.alternatives.filter((alternative) =>
+          scoredIds.has(alternative.id) &&
+          (alternative.status === 'feasible' || alternative.status === 'selected'))
+          .map((alternative) => alternative.id));
+        const currentDecision = (d.decision?.scoreRunId || d.decisionRecord?.scoreRunId)
+          === d.scoreRun?.id && d.scoreRun?.current === true;
+        setSelectedAlt((prev) => {
+          if (d.state !== 'OptionsReady') return recorded || prev || winner || d.alternatives![0].id;
+          return (feasibleIds.has(prev) ? prev : '')
+            || (currentDecision && feasibleIds.has(recorded ?? '') ? recorded! : '')
+            || (winner && feasibleIds.has(winner) ? winner : '')
+            || d.alternatives!.find((alternative) => feasibleIds.has(alternative.id))?.id || '';
+        });
       }
       // 初始化权重表单为决策类型默认权重
       const criteria = d.decisionType?.criteria ?? [];
@@ -366,11 +381,18 @@ export function CaseDetailPage() {
     || (detail.decisionRecord
       ? {
         alternativeId: detail.decisionRecord.selectedAlternativeId,
+        scoreRunId: detail.decisionRecord.scoreRunId,
         rationale: detail.decisionRecord.rationale,
         overridden: detail.decisionRecord.overridden,
         createdAt: detail.decisionRecord.createdAt,
       }
       : null);
+  const scoreByAlternative = new Map(scores.map((score) => [score.alternativeId, score]));
+  const selectedScore = scoreByAlternative.get(selectedAlt);
+  const selectableAlternatives = (detail.alternatives ?? []).filter((alternative) =>
+    scoreByAlternative.get(alternative.id)?.feasible === true &&
+    (alternative.status === 'feasible' || alternative.status === 'selected'));
+  const currentDecision = !!decision && decision.scoreRunId === detail.scoreRun?.id && decisionReady;
   const missingActionParams = actionSchema && resolvedAction && actionSchema.key === resolvedAction.actionKey
     ? actionSchema.required.filter((key) => {
       const value = resolvedAction.defaultParams[key];
@@ -393,7 +415,7 @@ export function CaseDetailPage() {
         ? '检查备选方案后，点击“至少三种备选就绪”。' : '建立至少三种备选方案。';
       case 'OptionsReady': return !decisionReady
         ? '核对事实缺口与方案，重新评分后再记录决策。'
-        : decision ? '确认决策方案与评分，再提交审批。' : '核对评分，选定方案并记录决策。';
+        : currentDecision ? '确认决策方案与评分，再提交审批。' : '核对评分，选定方案并记录决策。';
       case 'PendingApproval': return canApprove
         ? '审核决策理由与方案，然后批准或驳回。' : '审批已提交，等待审批角色处理。';
       case 'Approved': return '审批通过，执行所选方案的动作。';
@@ -881,22 +903,40 @@ export function CaseDetailPage() {
               有 {stalePendingCount} 条旧待审记录与当前案例状态不一致，无法继续审批。请核对方案后重新记录决策并提交审批。
             </Alert>
           )}
+          {detail.scoreRun && !detail.scoreRun.current && (
+            <Alert variant="warning">
+              当前快照或备选方案晚于上次评分。请到“方案与评估”重新评分，再记录决策。
+              <Button size="sm" variant="outline" className="ml-3" onClick={() => setSelectedPhase('options')}>
+                查看方案与评估
+              </Button>
+            </Alert>
+          )}
           {decision && (
-            <Alert variant={decision.overridden ? 'warning' : 'info'}>
-              决策：{altName(decision.alternativeId || decision.selectedAlternativeId)}
+            <Alert variant={currentDecision && !decision.overridden ? 'info' : 'warning'}>
+              {currentDecision ? '已记录决策' : '历史决策（需重新记录）'}：{altName(decision.alternativeId || decision.selectedAlternativeId)}
               {decision.overridden ? '（人工覆写，非最高分）' : ''}
               {decision.rationale ? ` — ${decision.rationale}` : ''}
             </Alert>
           )}
+          {(detail.alternatives ?? []).filter((alternative) =>
+            scoreByAlternative.get(alternative.id)?.feasible === false).map((alternative) => {
+            const reasons = scoreByAlternative.get(alternative.id)?.infeasibleReasons
+              ?? alternative.infeasibleReasons ?? [];
+            return <Alert key={alternative.id} variant="warning">
+              {alternative.name}不可选：{reasons.join('；') || '未通过硬约束'}
+            </Alert>;
+          })}
 
           <div className="flex flex-wrap items-end gap-2">
             <div className="w-64">
               <Label htmlFor="altSelect">选定方案</Label>
-              <Select id="altSelect" value={selectedAlt} disabled={state !== 'OptionsReady'}
+              <Select id="altSelect" value={selectedAlt} disabled={state !== 'OptionsReady' || selectableAlternatives.length === 0}
                 onChange={(e) => setSelectedAlt(e.target.value)}>
+                {!selectedAlt && <option value="">请先评分并选择可行方案</option>}
                 {(detail.alternatives || []).map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
+                  <option key={a.id} value={a.id} disabled={!selectableAlternatives.some((item) => item.id === a.id)}>
+                    {a.name}{scoreByAlternative.get(a.id)?.feasible === false ? ' · 不可行' :
+                      !scoreByAlternative.has(a.id) ? ' · 未评分' : ''}
                   </option>
                 ))}
               </Select>
@@ -913,7 +953,8 @@ export function CaseDetailPage() {
             </div>
             {canDecide && state === 'OptionsReady' && (
               <Button
-                disabled={busy || !selectedAlt || !decisionReady}
+                disabled={busy || !selectedAlt || !decisionReady || !selectedScore?.feasible
+                  || !selectableAlternatives.some((alternative) => alternative.id === selectedAlt)}
                 onClick={() =>
                   runAction('记录决策', () =>
                     api
@@ -931,7 +972,7 @@ export function CaseDetailPage() {
             {canDecide && state === 'OptionsReady' && (
               <Button
                 variant="outline"
-                disabled={busy || !decisionReady || !decision
+                disabled={busy || !decisionReady || !currentDecision || !selectedScore?.feasible
                   || (decision.alternativeId || decision.selectedAlternativeId) !== selectedAlt}
                 onClick={() =>
                   runAction('提交审批', () =>

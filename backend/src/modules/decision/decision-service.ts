@@ -262,6 +262,7 @@ export function getCase(caseId: string, user?: AuthUser) {
     };
     scoreRun = {
       id: scoreRunRow.id,
+      current: isScoreCurrent(row, scoreRunRow),
       scenarioRunId: scoreRunRow.scenario_run_id,
       winnerAlternativeId: scoreRunRow.winner_alternative_id,
       weights: weights.normalized ?? weights,
@@ -275,6 +276,7 @@ export function getCase(caseId: string, user?: AuthUser) {
 
   const decision = decisionRecord ? {
     id: decisionRecord.id,
+    scoreRunId: decisionRecord.score_run_id,
     selectedAlternativeId: decisionRecord.selected_alternative_id,
     alternativeId: decisionRecord.selected_alternative_id,
     rationale: decisionRecord.rationale,
@@ -326,6 +328,7 @@ export function getCase(caseId: string, user?: AuthUser) {
     caseObjects: objects,
     decisionRecord: decisionRecord ? {
       id: decisionRecord.id,
+      scoreRunId: decisionRecord.score_run_id,
       selectedAlternativeId: decisionRecord.selected_alternative_id,
       rationale: decisionRecord.rationale,
       dissent: decisionRecord.dissent,
@@ -352,6 +355,24 @@ export function getCase(caseId: string, user?: AuthUser) {
     decision,
     objects,
   };
+}
+
+function isScoreCurrent(caseRow: any, scoreRow: any): boolean {
+  if (!caseRow.snapshot_id || !scoreRow) return false;
+  const db = getDb();
+  const snapshot = db.prepare('SELECT created_at FROM case_snapshot WHERE id = ? AND case_id = ?')
+    .get(caseRow.snapshot_id, caseRow.id) as { created_at: string } | undefined;
+  if (!snapshot) return false;
+  const facts = JSON.parse(scoreRow.facts_json || '{}') as { snapshotId?: string };
+  const snapshotCurrent = facts.snapshotId
+    ? facts.snapshotId === caseRow.snapshot_id
+    : scoreRow.created_at >= snapshot.created_at;
+  const scoredIds = new Set((JSON.parse(scoreRow.ranking_json || '[]') as Array<{ alternativeId: string }>)
+    .map((item) => item.alternativeId));
+  const alternatives = db.prepare('SELECT id, updated_at FROM alternative WHERE case_id = ?')
+    .all(caseRow.id) as Array<{ id: string; updated_at: string }>;
+  return snapshotCurrent && alternatives.length === scoredIds.size &&
+    alternatives.every((alternative) => scoredIds.has(alternative.id) && alternative.updated_at <= scoreRow.created_at);
 }
 
 function mapAlternative(r: any) {
@@ -785,7 +806,7 @@ export function scoreAlternatives(input: ScoreInput) {
     scoreRunId, input.caseId, scenarioRunId,
     JSON.stringify({ raw: rawWeights, normalized: Object.fromEntries(Object.entries(rawWeights).map(([k, v]) => [k, v / totalWeight])) }),
     JSON.stringify(ranking), winner?.alternativeId ?? null, input.actor.username, nowIso(),
-    JSON.stringify({ factsComplete, missingFacts, stale })
+    JSON.stringify({ snapshotId: snapshot.id, factsComplete, missingFacts, stale })
   );
 
   writeAudit({
@@ -878,6 +899,9 @@ export function recordDecision(input: {
     'SELECT * FROM score_run WHERE case_id = ? ORDER BY created_at DESC LIMIT 1'
   ).get(input.caseId) as any;
   if (!lastScore) throw new AppError('PRECONDITION_FAILED', '尚未评分，不能记录决策');
+  if (!isScoreCurrent(c, lastScore)) {
+    throw new AppError('PRECONDITION_FAILED', '快照或备选方案已变化，请重新评分后记录决策');
+  }
   const ranked = (JSON.parse(lastScore.ranking_json || '[]') as any[])
     .find((r) => r.alternativeId === input.selectedAlternativeId);
   if (!ranked?.feasible) throw new AppError('CONSTRAINT_FAILED', '所选方案未通过硬约束');
@@ -923,13 +947,24 @@ export function requestApproval(input: {
   const latestDecision = db.prepare('SELECT * FROM decision_record WHERE case_id = ? ORDER BY created_at DESC LIMIT 1')
     .get(input.caseId) as any;
   if (!latestDecision) throw new AppError('PRECONDITION_FAILED', '尚未记录方案选择');
+  const lastScore = db.prepare('SELECT * FROM score_run WHERE case_id = ? ORDER BY created_at DESC LIMIT 1')
+    .get(input.caseId) as any;
+  if (!isScoreCurrent(c, lastScore) || latestDecision.score_run_id !== lastScore.id) {
+    throw new AppError('PRECONDITION_FAILED', '评分或决策记录已过期，请重新评分并记录决策');
+  }
+  const ranked = (JSON.parse(lastScore.ranking_json || '[]') as Array<{ alternativeId: string; feasible: boolean }>)
+    .find((item) => item.alternativeId === latestDecision.selected_alternative_id);
+  if (!ranked?.feasible) throw new AppError('CONSTRAINT_FAILED', '决策方案未通过当前硬约束');
   if (input.alternativeId && latestDecision.selected_alternative_id !== input.alternativeId) {
     throw new AppError('CONFLICT', '审批方案与决策记录不一致');
   }
   input.alternativeId = latestDecision.selected_alternative_id;
-  const alternative = db.prepare('SELECT proposed_actions FROM alternative WHERE id = ? AND case_id = ?')
+  const alternative = db.prepare('SELECT proposed_actions, status FROM alternative WHERE id = ? AND case_id = ?')
     .get(input.alternativeId, input.caseId) as any;
   if (!alternative) throw new AppError('NOT_FOUND', '所选方案不存在');
+  if (alternative.status !== 'feasible' && alternative.status !== 'selected') {
+    throw new AppError('CONSTRAINT_FAILED', '决策方案当前不可选，请重新评分');
+  }
   const actionVersions: Record<string, number> = {};
   for (const proposed of JSON.parse(alternative.proposed_actions || '[]') as Array<{ actionKey?: string; params?: Record<string, unknown> }>) {
     if (!proposed.actionKey) continue;
