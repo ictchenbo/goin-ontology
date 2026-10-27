@@ -931,11 +931,31 @@ export function requestApproval(input: {
     .get(input.alternativeId, input.caseId) as any;
   if (!alternative) throw new AppError('NOT_FOUND', '所选方案不存在');
   const actionVersions: Record<string, number> = {};
-  for (const proposed of JSON.parse(alternative.proposed_actions || '[]') as Array<{ actionKey?: string }>) {
+  for (const proposed of JSON.parse(alternative.proposed_actions || '[]') as Array<{ actionKey?: string; params?: Record<string, unknown> }>) {
     if (!proposed.actionKey) continue;
-    const action = db.prepare('SELECT version FROM action_type WHERE action_key = ? AND state = ?')
-      .get(proposed.actionKey, 'published') as { version: number } | undefined;
+    const action = db.prepare('SELECT version, params_schema FROM action_type WHERE action_key = ? AND state = ? AND domain_id = ?')
+      .get(proposed.actionKey, 'published', currentDomainId()) as { version: number; params_schema: string } | undefined;
     if (!action) throw new AppError('PRECONDITION_FAILED', `方案中的 Action 不可用: ${proposed.actionKey}`);
+    const schema = JSON.parse(action.params_schema || '{}') as {
+      required?: string[]; properties?: Record<string, { type?: string }>;
+    };
+    const params = proposed.params && typeof proposed.params === 'object' && !Array.isArray(proposed.params)
+      ? proposed.params : {};
+    const errors: string[] = [];
+    for (const key of schema.required ?? []) {
+      if (params[key] === undefined || params[key] === null || params[key] === '') errors.push(`缺少参数: ${key}`);
+    }
+    for (const [key, spec] of Object.entries(schema.properties ?? {})) {
+      const value = params[key];
+      if (value === undefined || value === null || !spec.type) continue;
+      const actual = Array.isArray(value) ? 'array' : typeof value;
+      if (actual !== spec.type && !(spec.type === 'datetime' && actual === 'string')) {
+        errors.push(`参数 ${key} 类型应为 ${spec.type}，实际 ${actual}`);
+      }
+    }
+    if (errors.length) {
+      throw new AppError('PRECONDITION_FAILED', `方案 ${proposed.actionKey} 不能提交审批: ${errors.join('; ')}`);
+    }
     actionVersions[proposed.actionKey] = action.version;
   }
   const approveRoles = dt.roleMatrix.approve ?? ['approver'];

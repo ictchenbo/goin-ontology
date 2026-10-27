@@ -178,8 +178,8 @@ export function CaseDetailPage() {
   // 推演
   const [scenarioOverlay, setScenarioOverlay] = useState('{}');
 
-  // 执行动作参数（按方案中 proposedActions 的 actionKey + params 填充）
-  const [actionParams, setActionParams] = useState('{}');
+  const [actionSchema, setActionSchema] = useState<{ key: string; required: string[] } | null>(null);
+  const [actionSchemaError, setActionSchemaError] = useState('');
 
   // 复盘表单
   const [expectedJson, setExpectedJson] = useState('{"service": 80}');
@@ -255,8 +255,10 @@ export function CaseDetailPage() {
       await fn();
       setInfo(`${label}成功`);
       await load();
+      return true;
     } catch (e) {
       setError((e as ApiError)?.message || `${label}失败`);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -300,7 +302,7 @@ export function CaseDetailPage() {
       return {
         alternativeId: alt.id,
         actionKey: String(withKey.actionKey),
-        defaultParams: (withKey.params as Record<string, unknown>) ?? {},
+        defaultParams: (withKey.params ?? {}) as Record<string, unknown>,
       };
     }
     // 兼容：params 对象中携带 actionKey
@@ -310,18 +312,28 @@ export function CaseDetailPage() {
       return {
         alternativeId: alt.id,
         actionKey,
-        defaultParams: params ?? rest,
+        defaultParams: (params ?? rest) as Record<string, unknown>,
       };
     }
-    return { alternativeId: alt.id, actionKey: '', defaultParams: {} };
+    return { alternativeId: alt.id, actionKey: '', defaultParams: {} as Record<string, unknown> };
   }, [detail, selectedAlt]);
 
-  // 当方案变化时，填充执行动作参数
+  // 执行参数必须来自已批准方案；读取 Action 定义以提示旧方案缺失的必填项。
   useEffect(() => {
-    if (resolvedAction?.defaultParams && Object.keys(resolvedAction.defaultParams).length) {
-      setActionParams(JSON.stringify(resolvedAction.defaultParams, null, 2));
-    }
-  }, [resolvedAction?.alternativeId, resolvedAction?.actionKey]);
+    const actionKey = resolvedAction?.actionKey;
+    setActionSchema(null);
+    setActionSchemaError('');
+    if (!actionKey) return;
+    let active = true;
+    api.get<{ paramsSchema?: { required?: string[] } }>(`/action-types/${encodeURIComponent(actionKey)}`)
+      .then((definition) => {
+        if (active) setActionSchema({ key: actionKey, required: definition.paramsSchema?.required ?? [] });
+      })
+      .catch((error: ApiError) => {
+        if (active) setActionSchemaError(error.message || '无法读取 Action 参数定义');
+      });
+    return () => { active = false; };
+  }, [resolvedAction?.actionKey]);
 
   if (loading) return <div className="text-muted-foreground">加载中…</div>;
   if (!detail) {
@@ -347,6 +359,11 @@ export function CaseDetailPage() {
         createdAt: detail.decisionRecord.createdAt,
       }
       : null);
+  const missingActionParams = actionSchema && resolvedAction && actionSchema.key === resolvedAction.actionKey
+    ? actionSchema.required.filter((key) => {
+      const value = resolvedAction.defaultParams[key];
+      return value === undefined || value === null || value === '';
+    }) : [];
   const criteria = detail.decisionType?.criteria ?? [];
   const pendingApproval = state === 'PendingApproval'
     ? detail.approvals?.find((a) => a.status === 'pending') : undefined;
@@ -603,7 +620,7 @@ export function CaseDetailPage() {
               </ul>
             )}
 
-            {canDecide && (
+            {canDecide && (state === 'Oriented' || state === 'OptionsReady') && (
               <div className="space-y-2 rounded-md border border-border p-3">
                 <Label htmlFor="altName">新增方案</Label>
                 <Input id="altName" value={newAltName} onChange={(e) => setNewAltName(e.target.value)} placeholder="方案名称" />
@@ -966,17 +983,44 @@ export function CaseDetailPage() {
                   <span className="text-muted-foreground">方案：</span>
                   <span>{altName(resolvedAction.alternativeId)}</span>
                 </div>
-                <Label htmlFor="actionParams">已批准动作参数 JSON</Label>
+                <Label htmlFor="actionParams">方案中的动作参数 JSON（审批后不可修改）</Label>
                 <Textarea
                   id="actionParams"
                   rows={5}
-                  value={actionParams}
+                  value={JSON.stringify(resolvedAction.defaultParams, null, 2)}
                   readOnly
                   className="font-mono text-xs"
                 />
+                {actionSchemaError && <Alert variant="error">{actionSchemaError}</Alert>}
+                {missingActionParams.length > 0 && (
+                  <Alert variant="warning">
+                    当前方案缺少必填参数：{missingActionParams.join('、')}。已批准方案的参数不能在执行时修改；请退回方案阶段，补全后重新评分和审批。
+                  </Alert>
+                )}
+                {state === 'Approved' && canDecide && missingActionParams.length > 0 && (
+                  <Button variant="outline" disabled={busy} onClick={async () => {
+                    const original = detail.alternatives?.find((item) => item.id === resolvedAction.alternativeId);
+                    const proposed = original?.proposedActions?.find((item) => item.actionKey === resolvedAction.actionKey);
+                    const rootObjectId = detail.caseObjects?.find((item) => item.role === 'trigger')?.objectId
+                      || detail.objects?.find((item) => item.role === 'trigger')?.objectId;
+                    setNewAltName(`${original?.name || '原方案'}（参数补全）`);
+                    setNewAltDesc(original?.description || '');
+                    setNewAltParams(JSON.stringify({ ...proposed, params: {
+                      ...resolvedAction.defaultParams,
+                      ...(rootObjectId && !resolvedAction.defaultParams.objectId ? { objectId: rootObjectId } : {}),
+                    } }, null, 2));
+                    const returned = await runAction('退回方案阶段', () =>
+                      api.post(`/cases/${caseId}/transition`, {
+                        toState: 'OptionsReady', reason: '补全已批准方案的动作参数，重新评分和审批',
+                      }).then(() => undefined));
+                    if (returned) setSelectedPhase('options');
+                  }}>
+                    退回并准备补全方案
+                  </Button>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <Button
-                    disabled={busy || state !== 'Approved'}
+                    disabled={busy || state !== 'Approved' || !actionSchema || missingActionParams.length > 0}
                     onClick={() => {
                       runAction('执行动作', () =>
                         api

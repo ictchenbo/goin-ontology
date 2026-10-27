@@ -182,6 +182,68 @@ test('案例退回与重新提交会使旧审批失效', async () => {
   assert.equal(detail.data.approvals.filter((item: any) => item.status === 'pending').length, 1);
 });
 
+test('动作参数缺失时拒绝审批，补全并重新审批后可执行', async () => {
+  const cases = await request('GET', '/cases?decisionTypeKey=ps_case_response', 'analyst');
+  const template = await request('GET', `/cases/${cases.data.items[0].id}`, 'analyst');
+  const rootObjectId = template.data.rootObjectId;
+  const created = await request('POST', '/cases', 'analyst', {
+    title: '验收动作参数补全', decisionTypeKey: 'ps_case_response', rootObjectId,
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.data));
+  const caseId = created.data.id;
+  assert.equal((await request('POST', `/cases/${caseId}/transition`, 'analyst',
+    { toState: 'Observed', reason: '确认事实' })).status, 200);
+  assert.equal((await request('POST', `/cases/${caseId}/orient`, 'analyst',
+    { rootObjectId, depth: 5, maxAgeDays: 30 })).status, 200);
+  assert.equal((await request('POST', `/cases/${caseId}/transition`, 'analyst',
+    { toState: 'Oriented', reason: '确认快照' })).status, 200);
+  const incomplete = await request('POST', `/cases/${caseId}/alternatives`, 'analyst', {
+    name: '缺参跟进', proposedActions: [{ actionKey: 'ps_create_followup', safetyScore: 80,
+      proportionalityScore: 80, burdenScore: 80, params: {} }],
+  });
+  assert.equal(incomplete.status, 201, JSON.stringify(incomplete.data));
+  for (const item of template.data.alternatives.slice(0, 2)) {
+    const added = await request('POST', `/cases/${caseId}/alternatives`, 'analyst', {
+      name: item.name, proposedActions: item.proposedActions,
+    });
+    assert.equal(added.status, 201, JSON.stringify(added.data));
+  }
+  assert.equal((await request('POST', `/cases/${caseId}/transition`, 'analyst',
+    { toState: 'OptionsReady', reason: '方案就绪' })).status, 200);
+  assert.equal((await request('POST', `/cases/${caseId}/score`, 'analyst', {})).status, 200);
+  assert.equal((await request('POST', `/cases/${caseId}/decision`, 'analyst', {
+    selectedAlternativeId: incomplete.data.id, rationale: '核对执行参数',
+  })).status, 201);
+  const blocked = await request('POST', `/cases/${caseId}/approvals`, 'analyst', {
+    alternativeId: incomplete.data.id,
+  });
+  assert.equal(blocked.status, 400);
+  assert.match(blocked.data.error.message, /objectId/);
+  assert.match(blocked.data.error.message, /assignee/);
+  const correction = await request('POST', `/cases/${caseId}/alternatives`, 'analyst', {
+    name: '补全参数跟进', proposedActions: [{ actionKey: 'ps_create_followup', safetyScore: 80,
+      proportionalityScore: 80, burdenScore: 80, params: { objectId: rootObjectId, assignee: 'special-unit' } }],
+  });
+  assert.equal(correction.status, 201, JSON.stringify(correction.data));
+  assert.equal((await request('POST', `/cases/${caseId}/score`, 'analyst', {})).status, 200);
+  assert.equal((await request('POST', `/cases/${caseId}/decision`, 'analyst', {
+    selectedAlternativeId: correction.data.id, rationale: '参数完整，重新比选',
+  })).status, 201);
+  const approval = await request('POST', `/cases/${caseId}/approvals`, 'analyst', {
+    alternativeId: correction.data.id,
+  });
+  assert.equal(approval.status, 201, JSON.stringify(approval.data));
+  assert.equal((await request('POST', `/approvals/${approval.data.id}/decide`, 'admin',
+    { decision: 'approved' })).status, 200);
+  const executed = await request('POST', '/actions/execute', 'admin', {
+    actionKey: 'ps_create_followup', caseId, alternativeId: correction.data.id,
+    approvalId: approval.data.id, params: { objectId: rootObjectId, assignee: 'special-unit' },
+    idempotencyKey: `case-action-params-${caseId}`,
+  });
+  assert.equal(executed.status, 200, JSON.stringify(executed.data));
+  assert.equal(executed.data.status, 'succeeded');
+});
+
 test('情报修订自动使已批准的演训案例失效', async () => {
   const cases = await request('GET', '/cases?decisionTypeKey=mil_threat_response', 'intel');
   const caseId = cases.data.items[0].id;
