@@ -104,7 +104,7 @@ export function Layout() {
       )}
 
       {/* 主内容区 */}
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border bg-background/95 px-4 backdrop-supports-[backdrop-filter]:bg-background/80">
           <button
             className="lg:hidden"
@@ -152,7 +152,7 @@ export function Layout() {
           )}
         </header>
 
-        <main className="flex-1 p-4 md:p-6" id="main-content">
+        <main className="min-w-0 flex-1 p-4 md:p-6" id="main-content">
           <Outlet />
         </main>
       </div>

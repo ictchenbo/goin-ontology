@@ -501,6 +501,18 @@ export function transitionCase(caseId: string, toState: string, actor: AuthUser,
     && !hasRole(actor, dt.roleMatrix.approve ?? ['approver'])) {
     throw new AppError('FORBIDDEN', '仅执行/审批角色可标记案例失败');
   }
+  // 退回或取消后，旧审批不再对应当前流程状态。
+  if (['PendingApproval', 'Approved'].includes(row.state)
+    && ['OptionsReady', 'Cancelled'].includes(toState)) {
+    const invalidated = db.prepare(`UPDATE approval SET status = 'invalidated', invalidated_reason = ?
+      WHERE case_id = ? AND status IN ('pending', 'approved')`)
+      .run(`案例状态已转为 ${toState}`, caseId);
+    if (invalidated.changes > 0) {
+      writeAudit({ actor: actor.username, eventType: 'approval.invalidated',
+        resourceType: 'decision_case', resourceId: caseId,
+        detail: { toState, count: invalidated.changes } });
+    }
+  }
   db.prepare('UPDATE decision_case SET state = ?, updated_at = ?, closed_at = ? WHERE id = ?')
     .run(toState, nowIso(), toState === 'Closed' || toState === 'Cancelled' ? nowIso() : row.closed_at, caseId);
   writeAudit({
@@ -935,6 +947,15 @@ export function requestApproval(input: {
     id, input.caseId, input.alternativeId, input.actor.username,
     input.comment ?? '', JSON.stringify(approveRoles), nowIso(), JSON.stringify(actionVersions)
   );
+  // 重新提交时使历史待审申请失效，避免同一案例同时存在多条可批准记录。
+  const superseded = db.prepare(`UPDATE approval SET status = 'invalidated', invalidated_reason = ?
+    WHERE case_id = ? AND id <> ? AND status = 'pending'`)
+    .run('已由新的审批申请替代', input.caseId, id);
+  if (superseded.changes > 0) {
+    writeAudit({ actor: input.actor.username, eventType: 'approval.superseded',
+      resourceType: 'decision_case', resourceId: input.caseId,
+      detail: { newApprovalId: id, count: superseded.changes } });
+  }
   db.prepare('UPDATE decision_case SET state = ?, updated_at = ? WHERE id = ?')
     .run('PendingApproval', nowIso(), input.caseId);
   writeAudit({

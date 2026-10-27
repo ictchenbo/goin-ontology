@@ -1,7 +1,7 @@
 /**
  * 案例详情页：OODA 全流程（态势构建、方案、推演、评分、决策、审批、执行、复盘）
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -136,10 +136,23 @@ interface AiSuggestion {
   evaluations?: Array<{ passed: boolean; checks: Record<string, unknown> }>;
 }
 
-const STATE_FLOW = [
-  'New', 'Observed', 'Oriented', 'OptionsReady', 'PendingApproval',
-  'Approved', 'Executing', 'Completed', 'OutcomeReviewed', 'Closed',
+type PhaseId = 'facts' | 'options' | 'approval' | 'execution' | 'outcome';
+
+const PHASES: Array<{ id: PhaseId; label: string; description: string }> = [
+  { id: 'facts', label: '事实与快照', description: '观察、定向' },
+  { id: 'options', label: '方案与评估', description: '备选、推演、评分' },
+  { id: 'approval', label: '决策与审批', description: '选择、审核' },
+  { id: 'execution', label: '执行动作', description: '批准后执行' },
+  { id: 'outcome', label: '结果与关闭', description: '记录、复盘' },
 ];
+
+function phaseForState(state?: string): PhaseId {
+  if (state === 'New' || state === 'Observed') return 'facts';
+  if (state === 'Oriented' || state === 'OptionsReady') return 'options';
+  if (state === 'PendingApproval') return 'approval';
+  if (state === 'Approved' || state === 'Executing') return 'execution';
+  return 'outcome';
+}
 
 export function CaseDetailPage() {
   const { caseId } = useParams<{ caseId: string }>();
@@ -177,6 +190,15 @@ export function CaseDetailPage() {
   const [aiSuggestions, setAiSuggestions] = useState<AiSuggestion[]>([]);
   const [aiKind, setAiKind] = useState('explain');
   const [aiReviewNote, setAiReviewNote] = useState('');
+  const [selectedPhase, setSelectedPhase] = useState<PhaseId>('facts');
+  const decisionReady = !!detail?.scoreRun?.winnerAlternativeId
+    && detail.facts?.factsComplete !== false && detail.facts?.stale !== true;
+  const currentPhase = detail?.state === 'OptionsReady' && decisionReady
+    ? 'approval' : phaseForState(detail?.state);
+
+  useEffect(() => {
+    setSelectedPhase(currentPhase);
+  }, [caseId, currentPhase]);
 
   const load = useCallback(async () => {
     if (!caseId) return;
@@ -198,7 +220,11 @@ export function CaseDetailPage() {
       }
       const winner = d.scoreRun?.winnerAlternativeId;
       if (d.alternatives?.length) {
-        setSelectedAlt((prev) => prev || winner || d.alternatives![0].id);
+        const recorded = d.decision?.alternativeId || d.decision?.selectedAlternativeId
+          || d.decisionRecord?.selectedAlternativeId;
+        setSelectedAlt((prev) => recorded
+          || (d.alternatives!.some((alternative) => alternative.id === prev) ? prev : '')
+          || winner || d.alternatives![0].id);
       }
       // 初始化权重表单为决策类型默认权重
       const criteria = d.decisionType?.criteria ?? [];
@@ -322,9 +348,35 @@ export function CaseDetailPage() {
       }
       : null);
   const criteria = detail.decisionType?.criteria ?? [];
-  const pendingApproval = detail.approvals?.find((a) => a.status === 'pending');
+  const pendingApproval = state === 'PendingApproval'
+    ? detail.approvals?.find((a) => a.status === 'pending') : undefined;
   const approvedApproval = detail.approvals?.find((a) => a.status === 'approved');
+  const stalePendingCount = state === 'PendingApproval' ? 0
+    : (detail.approvals ?? []).filter((a) => a.status === 'pending').length;
   const altName = (id?: string) => detail.alternatives?.find((a) => a.id === id)?.name || id || '—';
+  const currentPhaseIndex = PHASES.findIndex((phase) => phase.id === currentPhase);
+  const nextStep = (() => {
+    switch (state) {
+      case 'New': return '确认案例事实后，点击“完成 Observe”。';
+      case 'Observed': return detail.snapshotId
+        ? '确认快照后，点击“完成 Orient”。' : '先执行 Orient 快照，再确认定向。';
+      case 'Oriented': return (detail.alternatives?.length ?? 0) >= 3
+        ? '检查备选方案后，点击“至少三种备选就绪”。' : '建立至少三种备选方案。';
+      case 'OptionsReady': return !decisionReady
+        ? '核对事实缺口与方案，重新评分后再记录决策。'
+        : decision ? '确认决策方案与评分，再提交审批。' : '核对评分，选定方案并记录决策。';
+      case 'PendingApproval': return canApprove
+        ? '审核决策理由与方案，然后批准或驳回。' : '审批已提交，等待审批角色处理。';
+      case 'Approved': return '审批通过，执行所选方案的动作。';
+      case 'Executing': return '核对执行记录，完成后标记 Completed。';
+      case 'Completed': return '记录实际结果与证据，完成复盘。';
+      case 'OutcomeReviewed': return '复盘完成，可以关闭案例。';
+      case 'Failed': return '检查失败原因，补充复盘或重新定向。';
+      case 'Closed': return '案例已关闭，可切换阶段查看历史记录或导出回放。';
+      case 'Cancelled': return '案例已取消，可切换阶段查看历史记录。';
+      default: return '查看当前阶段的记录与操作。';
+    }
+  })();
 
   return (
     <div className="space-y-6">
@@ -350,81 +402,43 @@ export function CaseDetailPage() {
       {error && <Alert variant="error">{error}</Alert>}
       {info && <Alert variant="success">{info}</Alert>}
 
-      {/* OODA 步骤状态条 */}
-      <Card>
-        <CardContent className="flex flex-wrap items-center gap-2 p-4">
-          {STATE_FLOW.map((s, i, arr) => {
-            const idx = arr.indexOf(state);
-            const active = state === s;
-            const done = idx >= 0 && i < idx;
-            return (
-              <React.Fragment key={s}>
-                <span
-                  className={
-                    active
-                      ? 'rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground'
-                      : done
-                        ? 'rounded-full bg-primary/20 px-2.5 py-1 text-xs text-primary'
-                        : 'rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground'
-                  }
-                >
-                  {s}
-                </span>
-                {i < arr.length - 1 && <span className="text-muted-foreground">→</span>}
-              </React.Fragment>
-            );
-          })}
+      <Card className="overflow-hidden">
+        <CardContent className="space-y-5 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">当前阶段</p>
+              <h2 className="mt-1 text-lg font-semibold">{PHASES[currentPhaseIndex].label}</h2>
+              <p className="mt-1 text-sm text-muted-foreground">下一步：{nextStep}</p>
+            </div>
+            <Badge variant={statusVariant(state)}>{state}</Badge>
+          </div>
+          <nav aria-label="案例处理阶段">
+            <ol className="flex gap-2 overflow-x-auto pb-1">
+              {PHASES.map((phase, index) => (
+                <li key={phase.id} className="min-w-[148px] flex-1">
+                  <button
+                    type="button"
+                    aria-current={currentPhase === phase.id ? 'step' : undefined}
+                    aria-pressed={selectedPhase === phase.id}
+                    aria-controls={`phase-${phase.id}`}
+                    onClick={() => setSelectedPhase(phase.id)}
+                    className={`w-full rounded-lg border p-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${
+                      selectedPhase === phase.id ? 'border-primary bg-primary/10' : 'border-border hover:bg-accent'
+                    }`}
+                  >
+                    <span className="text-xs text-muted-foreground">第 {index + 1} 步 · {
+                      index < currentPhaseIndex ? '已完成' : index === currentPhaseIndex ? '当前' : '待进行'
+                    }</span>
+                    <span className="mt-1 block text-sm font-semibold">{phase.label}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{phase.description}</span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </nav>
         </CardContent>
       </Card>
-      {canDecide && ['New', 'Observed', 'Oriented'].includes(state) && <div className="flex flex-wrap gap-2">
-        {state === 'New' && <Button disabled={busy} onClick={() => runAction('完成观察', () =>
-          api.post(`/cases/${caseId}/transition`, { toState: 'Observed', reason: '事实已进入案例' }).then(() => undefined))}>
-          完成 Observe
-        </Button>}
-        {state === 'Observed' && <Button disabled={busy || !detail.snapshotId} onClick={() => runAction('完成定向', () =>
-          api.post(`/cases/${caseId}/transition`, { toState: 'Oriented', reason: '情境快照已确认' }).then(() => undefined))}>
-          完成 Orient
-        </Button>}
-        {state === 'Oriented' && <Button disabled={busy || (detail.alternatives?.length ?? 0) < 3}
-          onClick={() => runAction('备选就绪', () =>
-            api.post(`/cases/${caseId}/transition`, { toState: 'OptionsReady', reason: '备选方案已建立' }).then(() => undefined))}>
-          至少三种备选就绪
-        </Button>}
-      </div>}
-      <Card>
-        <CardHeader>
-          <CardTitle>AI 建议与人工复核</CardTitle>
-          <CardDescription>可选适配器只生成建议；请核对证据、约束和方案。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {canDecide && <div className="flex flex-wrap items-end gap-2">
-            <div><Label htmlFor="ai-kind">建议类型</Label>
-              <Select id="ai-kind" value={aiKind} onChange={(e) => setAiKind(e.target.value)}>
-                <option value="explain">解释</option><option value="missing_facts">缺失事实</option>
-                <option value="alternative_draft">备选草案</option>
-              </Select></div>
-            <Button disabled={busy} onClick={() => runAction('请求建议', () =>
-              api.post(`/cases/${caseId}/ai-suggestions`, { kind: aiKind }).then(() => undefined))}>请求建议</Button>
-          </div>}
-          {aiSuggestions.map((item) => <div key={item.id} className="space-y-2 rounded-md border border-border p-3 text-sm">
-            <div className="flex flex-wrap gap-2"><Badge variant="secondary">建议 · {item.kind}</Badge>
-              <Badge variant="outline">{item.status}</Badge><span>模型 {item.modelVersion}</span></div>
-            <p className="whitespace-pre-wrap">{item.content.text}</p>
-            <p className="text-muted-foreground">证据：{item.content.citations?.join(', ') || '未引用'} ·
-              自动检查：{item.evaluations?.[0]?.passed ? '通过' : '待核实'}</p>
-            {canDecide && item.status === 'suggestion' && <div className="flex flex-wrap gap-2">
-              <Input aria-label="复核备注" placeholder="纠正或拒绝时填写理由" value={aiReviewNote}
-                onChange={(e) => setAiReviewNote(e.target.value)} />
-              {(['accepted', 'corrected', 'rejected'] as const).map((status) =>
-                <Button key={status} size="sm" variant="outline" disabled={busy}
-                  onClick={() => runAction('复核建议', () => api.post(`/ai-suggestions/${item.id}/review`, {
-                    status, note: aiReviewNote,
-                  }).then(() => undefined))}>{status}</Button>)}
-            </div>}
-          </div>)}
-        </CardContent>
-      </Card>
-
+      <section id="phase-facts" aria-label="事实与快照" hidden={selectedPhase !== 'facts'} className="space-y-6">
       {/* 态势构建 */}
       <Card>
         <CardHeader>
@@ -486,8 +500,63 @@ export function CaseDetailPage() {
         </CardContent>
       </Card>
 
+      {canDecide && (state === 'New' || state === 'Observed') && (
+        <div className="flex flex-wrap gap-2">
+          {state === 'New' && <Button disabled={busy} onClick={() => runAction('完成观察', () =>
+            api.post(`/cases/${caseId}/transition`, { toState: 'Observed', reason: '事实已进入案例' }).then(() => undefined))}>
+            完成 Observe
+          </Button>}
+          {state === 'Observed' && <Button disabled={busy || !detail.snapshotId} onClick={() => runAction('完成定向', () =>
+            api.post(`/cases/${caseId}/transition`, { toState: 'Oriented', reason: '情境快照已确认' }).then(() => undefined))}>
+            完成 Orient
+          </Button>}
+        </div>
+      )}
+      <details className="rounded-lg border border-border p-4">
+        <summary className="cursor-pointer text-sm font-medium">AI 建议与人工复核 <span className="text-muted-foreground">（可选）</span></summary>
+        <div className="mt-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>AI 建议与人工复核</CardTitle>
+          <CardDescription>可选适配器只生成建议；请核对证据、约束和方案。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {canDecide && <div className="flex flex-wrap items-end gap-2">
+            <div><Label htmlFor="ai-kind">建议类型</Label>
+              <Select id="ai-kind" value={aiKind} onChange={(e) => setAiKind(e.target.value)}>
+                <option value="explain">解释</option><option value="missing_facts">缺失事实</option>
+                <option value="alternative_draft">备选草案</option>
+              </Select></div>
+            <Button disabled={busy} onClick={() => runAction('请求建议', () =>
+              api.post(`/cases/${caseId}/ai-suggestions`, { kind: aiKind }).then(() => undefined))}>请求建议</Button>
+          </div>}
+          {aiSuggestions.map((item) => <div key={item.id} className="space-y-2 rounded-md border border-border p-3 text-sm">
+            <div className="flex flex-wrap gap-2"><Badge variant="secondary">建议 · {item.kind}</Badge>
+              <Badge variant="outline">{item.status}</Badge><span>模型 {item.modelVersion}</span></div>
+            <p className="whitespace-pre-wrap">{item.content.text}</p>
+            <p className="text-muted-foreground">证据：{item.content.citations?.join(', ') || '未引用'} ·
+              自动检查：{item.evaluations?.[0]?.passed ? '通过' : '待核实'}</p>
+            {canDecide && item.status === 'suggestion' && <div className="flex flex-wrap gap-2">
+              <Input aria-label="复核备注" placeholder="纠正或拒绝时填写理由" value={aiReviewNote}
+                onChange={(e) => setAiReviewNote(e.target.value)} />
+              {(['accepted', 'corrected', 'rejected'] as const).map((status) =>
+                <Button key={status} size="sm" variant="outline" disabled={busy}
+                  onClick={() => runAction('复核建议', () => api.post(`/ai-suggestions/${item.id}/review`, {
+                    status, note: aiReviewNote,
+                  }).then(() => undefined))}>{status}</Button>)}
+            </div>}
+          </div>)}
+        </CardContent>
+      </Card>
+
+        </div>
+      </details>
+
+      </section>
+
       {/* 方案与评分 */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <section id="phase-options" aria-label="方案与评估" hidden={selectedPhase !== 'options'} className="space-y-6">
+      <div className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>Decide · 方案备选</CardTitle>
@@ -506,7 +575,7 @@ export function CaseDetailPage() {
                       key={a.id}
                       className="flex items-start justify-between gap-2 rounded-md border border-border p-2.5"
                     >
-                      <div>
+                      <div className="min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="font-medium">{a.name}</span>
                           {infeasible && <Badge variant="destructive">不可行</Badge>}
@@ -518,8 +587,8 @@ export function CaseDetailPage() {
                           <p className="text-xs text-muted-foreground">{a.description}</p>
                         )}
                         {(a.proposedActions?.length ?? 0) > 0 && (
-                          <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                            {JSON.stringify(a.proposedActions?.[0]).slice(0, 120)}
+                          <p className="mt-1 break-all text-xs text-muted-foreground">
+                            拟议动作：{a.proposedActions?.[0]?.actionKey || '未配置'}
                           </p>
                         )}
                         {infeasible && (a.infeasibleReasons?.length ?? 0) > 0 && (
@@ -597,6 +666,61 @@ export function CaseDetailPage() {
             )}
           </CardContent>
         </Card>
+
+        {canDecide && state === 'Oriented' && (
+          <Button disabled={busy || (detail.alternatives?.length ?? 0) < 3}
+            onClick={() => runAction('备选就绪', () =>
+              api.post(`/cases/${caseId}/transition`, { toState: 'OptionsReady', reason: '备选方案已建立' }).then(() => undefined))}>
+            至少三种备选就绪
+          </Button>
+        )}
+
+        <details className="rounded-lg border border-border p-4">
+          <summary className="cursor-pointer text-sm font-medium">情景推演 <span className="text-muted-foreground">（可选，评分前使用）</span></summary>
+          <div className="mt-4">
+      {/* 情景推演 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>情景推演（Overlay）</CardTitle>
+          <CardDescription>
+            推演仅在内存叠加，不修改正式对象（由 assertNoOverlayLeak 校验）。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <Textarea
+            rows={4}
+            value={scenarioOverlay}
+            onChange={(e) => setScenarioOverlay(e.target.value)}
+            className="font-mono text-xs"
+            aria-label="推演覆盖 JSON"
+            placeholder='{"overrides": {"availableQty": 120}}'
+          />
+          {canDecide && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                let overlay: unknown;
+                try {
+                  overlay = JSON.parse(scenarioOverlay || '{}');
+                } catch {
+                  setError('推演覆盖 JSON 格式错误');
+                  return;
+                }
+                runAction('推演', () =>
+                  api.post(`/cases/${caseId}/scenarios`, { overlay }).then(() => undefined)
+                );
+              }}
+            >
+              运行推演
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
+          </div>
+        </details>
 
         <Card>
           <CardHeader>
@@ -684,55 +808,22 @@ export function CaseDetailPage() {
           </CardContent>
         </Card>
       </div>
-
-      {/* 情景推演 */}
-      <Card>
-        <CardHeader>
-          <CardTitle>情景推演（Overlay）</CardTitle>
-          <CardDescription>
-            推演仅在内存叠加，不修改正式对象（由 assertNoOverlayLeak 校验）。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <Textarea
-            rows={4}
-            value={scenarioOverlay}
-            onChange={(e) => setScenarioOverlay(e.target.value)}
-            className="font-mono text-xs"
-            aria-label="推演覆盖 JSON"
-            placeholder='{"overrides": {"availableQty": 120}}'
-          />
-          {canDecide && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => {
-                let overlay: unknown;
-                try {
-                  overlay = JSON.parse(scenarioOverlay || '{}');
-                } catch {
-                  setError('推演覆盖 JSON 格式错误');
-                  return;
-                }
-                runAction('推演', () =>
-                  api.post(`/cases/${caseId}/scenarios`, { overlay }).then(() => undefined)
-                );
-              }}
-            >
-              运行推演
-            </Button>
-          )}
-        </CardContent>
-      </Card>
+      </section>
 
       {/* 决策与审批 */}
+      <section id="phase-approval" aria-label="决策与审批" hidden={selectedPhase !== 'approval'} className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>决策与审批</CardTitle>
           <CardDescription>选定方案后申请审批；审批通过方可执行动作。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
+          <p className="text-sm text-muted-foreground">操作顺序：① 记录选定方案与理由 → ② 提交审批 → ③ 审批人批准或驳回。</p>
+          {stalePendingCount > 0 && (
+            <Alert variant="warning">
+              有 {stalePendingCount} 条旧待审记录与当前案例状态不一致，无法继续审批。请核对方案后重新记录决策并提交审批。
+            </Alert>
+          )}
           {decision && (
             <Alert variant={decision.overridden ? 'warning' : 'info'}>
               决策：{altName(decision.alternativeId || decision.selectedAlternativeId)}
@@ -741,27 +832,11 @@ export function CaseDetailPage() {
             </Alert>
           )}
 
-          {detail.approvals && detail.approvals.length > 0 && (
-            <div>
-              <h4 className="mb-1 text-sm font-medium">审批记录</h4>
-              <ul className="space-y-1 text-sm">
-                {detail.approvals.map((a) => (
-                  <li key={a.id} className="flex items-center gap-2">
-                    <Badge variant={statusVariant(a.status)}>{a.status}</Badge>
-                    <span className="text-muted-foreground">
-                      {a.decidedBy || a.requestedBy || '—'} · {formatTime(a.decidedAt || a.requestedAt || a.createdAt)}
-                    </span>
-                    {a.comment && <span className="text-xs">· {a.comment}</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
           <div className="flex flex-wrap items-end gap-2">
             <div className="w-64">
               <Label htmlFor="altSelect">选定方案</Label>
-              <Select id="altSelect" value={selectedAlt} onChange={(e) => setSelectedAlt(e.target.value)}>
+              <Select id="altSelect" value={selectedAlt} disabled={state !== 'OptionsReady'}
+                onChange={(e) => setSelectedAlt(e.target.value)}>
                 {(detail.alternatives || []).map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
@@ -774,13 +849,14 @@ export function CaseDetailPage() {
               <Input
                 id="decisionNote"
                 value={decisionNote}
+                disabled={state !== 'OptionsReady'}
                 onChange={(e) => setDecisionNote(e.target.value)}
                 placeholder="选择依据、关键权衡"
               />
             </div>
-            {canDecide && (
+            {canDecide && state === 'OptionsReady' && (
               <Button
-                disabled={busy || !selectedAlt}
+                disabled={busy || !selectedAlt || !decisionReady}
                 onClick={() =>
                   runAction('记录决策', () =>
                     api
@@ -795,10 +871,11 @@ export function CaseDetailPage() {
                 记录决策
               </Button>
             )}
-            {canDecide && (
+            {canDecide && state === 'OptionsReady' && (
               <Button
                 variant="outline"
-                disabled={busy}
+                disabled={busy || !decisionReady || !decision
+                  || (decision.alternativeId || decision.selectedAlternativeId) !== selectedAlt}
                 onClick={() =>
                   runAction('提交审批', () =>
                     api.post(`/cases/${caseId}/approvals`, { alternativeId: selectedAlt }).then(() => undefined)
@@ -844,10 +921,30 @@ export function CaseDetailPage() {
               </>
             )}
           </div>
+          {detail.approvals && detail.approvals.length > 0 && (
+            <details className="rounded-lg border border-border p-3" open={state === 'PendingApproval'}>
+              <summary className="cursor-pointer text-sm font-medium">审批记录（{detail.approvals.length}）</summary>
+              <ul className="mt-3 space-y-2 text-sm">
+                {detail.approvals.map((a) => (
+                  <li key={a.id} className="flex flex-wrap items-center gap-2">
+                    <Badge variant={statusVariant(a.status)}>
+                      {a.status === 'pending' && state !== 'PendingApproval' ? 'pending · 不可处理' : a.status}
+                    </Badge>
+                    <span className="text-muted-foreground">
+                      {a.decidedBy || a.requestedBy || '—'} · {formatTime(a.decidedAt || a.requestedAt || a.createdAt)}
+                    </span>
+                    {a.comment && <span className="text-xs">· {a.comment}</span>}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </CardContent>
       </Card>
+      </section>
 
       {/* Act · 执行动作（场景感知） */}
+      <section id="phase-execution" aria-label="执行动作" hidden={selectedPhase !== 'execution'} className="space-y-6">
       {canAct && (
         <Card>
           <CardHeader>
@@ -950,8 +1047,24 @@ export function CaseDetailPage() {
           </CardContent>
         </Card>
       )}
+      {!canAct && (
+        <Card>
+          <CardHeader>
+            <CardTitle>执行动作</CardTitle>
+            <CardDescription>此阶段由具有执行权限的角色处理。</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {(detail.actionRuns ?? []).length === 0 ? <p className="text-muted-foreground">暂无执行记录。</p>
+              : detail.actionRuns?.map((run) => (
+                <p key={run.id}>{run.actionKey} · {run.status} · {formatTime(run.executedAt)}</p>
+              ))}
+          </CardContent>
+        </Card>
+      )}
+      </section>
 
       {/* 复盘：结果记录与关闭 */}
+      <section id="phase-outcome" aria-label="结果与关闭" hidden={selectedPhase !== 'outcome'} className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Outcome · 结果复盘</CardTitle>
@@ -1117,6 +1230,7 @@ export function CaseDetailPage() {
           </div>
         </CardContent>
       </Card>
+      </section>
     </div>
   );
 }

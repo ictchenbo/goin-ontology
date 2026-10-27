@@ -149,6 +149,39 @@ test('公共安全法定措施缺少有效授权时被拒', async () => {
   assert.equal(blocked.status, 400);
 });
 
+test('案例退回与重新提交会使旧审批失效', async () => {
+  const cases = await request('GET', '/cases?decisionTypeKey=ps_case_response', 'analyst');
+  const caseId = cases.data.items[0].id;
+  const scored = await request('POST', `/cases/${caseId}/score`, 'analyst', {});
+  assert.equal(scored.status, 200, JSON.stringify(scored.data));
+  const selected = scored.data.ranking.find((item: any) => item.feasible);
+  assert.ok(selected);
+  const decision = await request('POST', `/cases/${caseId}/decision`, 'analyst', {
+    selectedAlternativeId: selected.alternativeId, rationale: '验收审批退回流程',
+  });
+  assert.equal(decision.status, 201, JSON.stringify(decision.data));
+  const first = await request('POST', `/cases/${caseId}/approvals`, 'analyst', {
+    alternativeId: selected.alternativeId,
+  });
+  assert.equal(first.status, 201, JSON.stringify(first.data));
+  const returned = await request('POST', `/cases/${caseId}/transition`, 'analyst', {
+    toState: 'OptionsReady', reason: '补充材料',
+  });
+  assert.equal(returned.status, 200, JSON.stringify(returned.data));
+  assert.equal(returned.data.approvals.find((item: any) => item.id === first.data.id).status, 'invalidated');
+
+  // 模拟升级前遗留的待审记录，重新提交时应自动替代它。
+  const { getDb } = require('../src/db/database');
+  getDb().prepare("UPDATE approval SET status = 'pending' WHERE id = ?").run(first.data.id);
+  const second = await request('POST', `/cases/${caseId}/approvals`, 'analyst', {
+    alternativeId: selected.alternativeId,
+  });
+  assert.equal(second.status, 201, JSON.stringify(second.data));
+  const detail = await request('GET', `/cases/${caseId}`, 'analyst');
+  assert.equal(detail.data.approvals.find((item: any) => item.id === first.data.id).status, 'invalidated');
+  assert.equal(detail.data.approvals.filter((item: any) => item.status === 'pending').length, 1);
+});
+
 test('情报修订自动使已批准的演训案例失效', async () => {
   const cases = await request('GET', '/cases?decisionTypeKey=mil_threat_response', 'intel');
   const caseId = cases.data.items[0].id;
