@@ -2,7 +2,7 @@
  * 案例详情页：OODA 全流程（态势构建、方案、推演、评分、决策、审批、执行、复盘）
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -49,6 +49,21 @@ interface ScoreRow {
   infeasibleReasons?: string[];
   reasons?: string[];
   scores?: Array<{ criterionKey: string; raw?: number; rawValue?: number; normalized?: number; weighted?: number }>;
+}
+
+interface SnapshotObject {
+  objectId: string;
+  title?: string;
+  typeKey?: string;
+  isRoot?: boolean;
+  redacted?: boolean;
+  evidence?: Array<{
+    evidenceId: string;
+    claim?: string;
+    sourceKey?: string;
+    stance?: string;
+    observedAt?: string;
+  }>;
 }
 
 interface CaseDetail {
@@ -198,6 +213,7 @@ export function CaseDetailPage() {
   const [actualJson, setActualJson] = useState('{"service": 75}');
   const [evidenceRefsText, setEvidenceRefsText] = useState('');
   const [availableEvidenceIds, setAvailableEvidenceIds] = useState<string[]>([]);
+  const [snapshotObjects, setSnapshotObjects] = useState<SnapshotObject[]>([]);
   const [reviewNotes, setReviewNotes] = useState('');
   const [aiSuggestions, setAiSuggestions] = useState<AiSuggestion[]>([]);
   const [aiKind, setAiKind] = useState('explain');
@@ -222,13 +238,18 @@ export function CaseDetailPage() {
       const suggestions = await api.get<{ items: AiSuggestion[] }>(`/cases/${caseId}/ai-suggestions`);
       setAiSuggestions(suggestions.items);
       if (d.snapshotId) {
-        const snapshot = await api.get<{ objects?: Array<{ evidence?: Array<{ evidenceId: string }> }> }>(
+        const snapshot = await api.get<{ objects?: SnapshotObject[] }>(
           `/snapshots/${d.snapshotId}`
         );
-        const ids = [...new Set((snapshot.objects ?? []).flatMap((o) =>
+        const snapshotItems = snapshot.objects ?? [];
+        setSnapshotObjects(snapshotItems);
+        const ids = [...new Set(snapshotItems.flatMap((o) =>
           (o.evidence ?? []).map((e) => e.evidenceId)))];
         setAvailableEvidenceIds(ids);
         setEvidenceRefsText((old) => old || ids[0] || '');
+      } else {
+        setSnapshotObjects([]);
+        setAvailableEvidenceIds([]);
       }
       const winner = d.scoreRun?.winnerAlternativeId;
       if (d.alternatives?.length) {
@@ -376,7 +397,6 @@ export function CaseDetailPage() {
   const scores = detail.scores || [];
   const factsComplete = detail.facts?.factsComplete ?? detail.scoreRun?.factsComplete;
   const missingFacts = detail.facts?.missing ?? detail.scoreRun?.missingFacts ?? [];
-  const objects = detail.objects || detail.caseObjects || [];
   const decision = detail.decision
     || (detail.decisionRecord
       ? {
@@ -509,16 +529,52 @@ export function CaseDetailPage() {
               缺失事实字段：{missingFacts.join(', ')}
             </Alert>
           )}
-          {objects.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {objects.map((o) => (
-                <Badge key={o.objectId} variant="outline">
-                  {o.objectId}
-                  {o.role ? ` · ${o.role}` : ''}
-                </Badge>
-              ))}
+          {detail.snapshotId ? (
+            <div className="rounded-md border border-border">
+              <Table>
+                <THeader><TR>
+                  <TH>相关对象</TH><TH>类型</TH><TH>角色</TH><TH>证据</TH>
+                </TR></THeader>
+                <TBody>
+                  {snapshotObjects.map((object) => (
+                    <TR key={object.objectId}>
+                      <TD className="min-w-48 align-top">
+                        {object.redacted ? (
+                          <span className="font-medium">无权查看</span>
+                        ) : (
+                          <>
+                            <Link to={`/objects/${encodeURIComponent(object.objectId)}`}
+                              className="font-medium text-primary hover:underline">
+                              {object.title || object.objectId}
+                            </Link>
+                            {object.title && <div className="font-mono text-xs text-muted-foreground">{object.objectId}</div>}
+                          </>
+                        )}
+                      </TD>
+                      <TD className="align-top">{object.typeKey || '—'}</TD>
+                      <TD className="align-top">{object.isRoot ? '触发对象' : '关联对象'}</TD>
+                      <TD className="min-w-64 align-top">
+                        {object.evidence?.length ? (
+                          <ul className="space-y-2">
+                            {object.evidence.map((evidence) => (
+                              <li key={evidence.evidenceId}>
+                                <div>{evidence.claim || '未填写证据主张'}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {[evidence.sourceKey || '未知来源', evidence.stance, evidence.observedAt && formatTime(evidence.observedAt)]
+                                    .filter(Boolean).join(' · ')}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : <span className="text-muted-foreground">暂无证据</span>}
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+              {snapshotObjects.length === 0 && <p className="p-3 text-sm text-muted-foreground">快照中暂无可见对象。</p>}
             </div>
-          )}
+          ) : <p className="text-sm text-muted-foreground">尚无 Orient 快照，执行快照后可查看相关对象和证据。</p>}
           <div className="flex flex-wrap gap-2">
             {canDecide && (
               <Button
