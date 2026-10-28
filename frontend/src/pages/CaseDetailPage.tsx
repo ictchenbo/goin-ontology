@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Table, TBody, TD, TH, THeader, TR } from '@/components/ui/Table';
 import { Input, Label, Select, Textarea } from '@/components/ui/Input';
 import { ActionObjectParams } from '@/components/ActionObjectParams';
+import { SnapshotRelationshipDag } from '@/components/SnapshotRelationshipDag';
 import { formatNum, formatTime } from '@/lib/utils';
 
 interface CriterionDef {
@@ -618,14 +619,15 @@ export function CaseDetailPage() {
           {detail.snapshotId && (
             <div className="space-y-3">
               <h3 className="font-semibold">对象之间的关系</h3>
-              {snapshotLinks.length ? <div className="rounded-md border border-border"><Table>
-                <THeader><TR><TH>起点</TH><TH>关系</TH><TH>终点</TH></TR></THeader>
-                <TBody>{snapshotLinks.map((link) => <TR key={link.id ?? `${link.linkKey}:${link.from}:${link.to}`}>
-                  <TD>{snapshotById.get(link.from) ? snapshotTitle(snapshotById.get(link.from)!) : '无权查看'}</TD>
-                  <TD className="font-medium">{link.linkDisplay || link.linkKey} →</TD>
-                  <TD>{snapshotById.get(link.to) ? snapshotTitle(snapshotById.get(link.to)!) : '无权查看'}</TD>
-                </TR>)}</TBody>
-              </Table></div> : <p className="text-sm text-muted-foreground">快照中没有可见的对象关系。</p>}
+              <SnapshotRelationshipDag
+                objects={snapshotObjects.map((object) => ({
+                  objectId: object.objectId,
+                  title: object.redacted ? '无权查看' : snapshotTitle(object),
+                  typeDisplay: object.redacted ? undefined : object.typeDisplay || object.typeKey,
+                  isRoot: object.isRoot,
+                  redacted: object.redacted,
+                }))}
+                links={snapshotLinks} />
             </div>
           )}
           {detail.snapshotId && (
