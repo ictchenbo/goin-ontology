@@ -915,6 +915,7 @@ const publicSafety: ScenarioPack = {
     { linkKey: 'option_requires_authority', displayName: '选项需要授权', fromType: 'ResponseOption', toType: 'LegalAuthority', cardinality: 'N:M' },
     { linkKey: 'case_has_event', displayName: '个案包含事件', fromType: 'SafetyCase', toType: 'ObservedEvent', cardinality: '1:N' },
     { linkKey: 'task_for_case', displayName: '任务属于个案', fromType: 'FollowUpTask', toType: 'SafetyCase', cardinality: 'N:1' },
+    { linkKey: 'task_produces_source', displayName: '任务产生来源记录', fromType: 'FollowUpTask', toType: 'SourceRecord', cardinality: '1:N' },
     { linkKey: 'event_has_subject', displayName: '事件关联主体', fromType: 'ObservedEvent', toType: 'Subject', cardinality: 'N:M' },
     { linkKey: 'corroboration_for_assessment', displayName: '佐证用于评估', fromType: 'Corroboration', toType: 'Assessment', cardinality: 'N:M' },
     { linkKey: 'review_for_event', displayName: '核查请求关联事件', fromType: 'ReviewRequest', toType: 'ObservedEvent', cardinality: 'N:1' },
@@ -1046,6 +1047,7 @@ const publicSafety: ScenarioPack = {
     { typeKey: 'ResponseOption', title: '补充核实', payload: { name: '补充核实', impactLevel: 'low', requiresAuthority: false, proportionalityNote: '在合法范围内进一步核实' } },
     { typeKey: 'ResponseOption', title: '申请法定措施', payload: { name: '申请法定措施', impactLevel: 'high', requiresAuthority: true, proportionalityNote: '须具备法定授权与必要性' } },
     { typeKey: 'SafetyCase', title: '公共安全核查个案-20261009-001', payload: { name: 'PS-2026-001', status: 'review', openedAt: '2026-10-09T08:00:00Z', purposeStatement: '依法核查可能影响公共安全的行为事件' } },
+    { typeKey: 'FollowUpTask', title: '广场巡逻核查任务-20261009-001', payload: { name: '广场巡逻核查任务-20261009-001', dueAt: '2026-10-09T10:00:00Z', status: 'done', assignee: '巡逻组' } },
   ],
   linksData: [
     { linkKey: 'event_from_source', fromIndex: 2, toIndex: 0 },
@@ -1053,6 +1055,8 @@ const publicSafety: ScenarioPack = {
     { linkKey: 'indicator_based_on_event', fromIndex: 4, toIndex: 2 },
     { linkKey: 'case_has_event', fromIndex: 10, toIndex: 2 },
     { linkKey: 'case_has_event', fromIndex: 10, toIndex: 3 },
+    { linkKey: 'task_for_case', fromIndex: 11, toIndex: 10 },
+    { linkKey: 'task_produces_source', fromIndex: 11, toIndex: 1 },
     { linkKey: 'option_requires_authority', fromIndex: 9, toIndex: 6 },
   ],
   sampleCase: {

@@ -162,6 +162,29 @@ test('Orient 快照保留观察事实、关系与规则提示的可追溯结果'
   assert.match(root.payload.description, /市民反映/);
   assert.ok(snapshot.links.some((link: any) => link.linkKey === 'event_from_source'
     && link.from === root.objectId && link.linkDisplay === '事件来自来源'));
+  const patrolTask = snapshot.objects.find((item: any) => item.typeKey === 'FollowUpTask'
+    && item.title === '广场巡逻核查任务-20261009-001');
+  const patrolSource = snapshot.objects.find((item: any) => item.typeKey === 'SourceRecord'
+    && item.title === 'SRC-巡逻记录');
+  const safetyCase = snapshot.objects.find((item: any) => item.typeKey === 'SafetyCase');
+  assert.ok(patrolTask && patrolSource && safetyCase);
+  assert.ok(snapshot.links.some((link: any) => link.linkKey === 'task_for_case'
+    && link.from === patrolTask.objectId && link.to === safetyCase.objectId));
+  assert.ok(snapshot.links.some((link: any) => link.linkKey === 'task_produces_source'
+    && link.from === patrolTask.objectId && link.to === patrolSource.objectId));
+  const citySource = snapshot.objects.find((item: any) => item.title === 'SRC-市民反映');
+  const patrolEvent = snapshot.objects.find((item: any) => item.title === '广场巡逻未见异常-20261009-002');
+  const { publicSafetyRelationshipFlow } = require('../../frontend/src/lib/case-relationship-flow');
+  const flow = publicSafetyRelationshipFlow(snapshot.objects, snapshot.links);
+  assert.equal(flow.notice, '');
+  for (const [from, to] of [
+    [citySource.objectId, root.objectId], [root.objectId, safetyCase.objectId],
+    [safetyCase.objectId, patrolTask.objectId], [patrolTask.objectId, patrolSource.objectId],
+    [patrolSource.objectId, patrolEvent.objectId],
+  ]) {
+    assert.ok(flow.links.some((link: any) => link.from === from && link.to === to));
+  }
+  assert.equal(flow.links.some((link: any) => link.from === root.objectId && link.to === citySource.objectId), false);
   const check = snapshot.ruleChecks.find((item: any) => item.objectId === root.objectId
     && item.ruleKey === 'ps_single_source_flag');
   assert.equal(check.matched, true);

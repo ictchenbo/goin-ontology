@@ -34,8 +34,10 @@ const COLUMN_GAP = 82;
 const OBJECT_ROW_GAP = 132;
 const RELATION_ROW_GAP = 76;
 const PADDING = 30;
+const VERTICAL_STEP = OBJECT_HEIGHT + RELATION_HEIGHT + 76;
+const VERTICAL_ROW_GAP = OBJECT_WIDTH + 60;
 
-function buildGraph(objects: GraphObject[], links: GraphLink[]) {
+function buildGraph(objects: GraphObject[], links: GraphLink[], direction: 'horizontal' | 'vertical') {
   const objectById = new Map(objects.map((object) => [object.objectId, object]));
   const ids = new Set([...objectById.keys(), ...links.flatMap((link) => [link.from, link.to])]);
   const indegree = new Map([...ids].map((id) => [id, 0]));
@@ -79,8 +81,8 @@ function buildGraph(objects: GraphObject[], links: GraphLink[]) {
       typeDisplay: objectById.get(id)?.redacted ? undefined : objectById.get(id)?.typeDisplay,
       isRoot: objectById.get(id)?.redacted ? false : objectById.get(id)?.isRoot,
       redacted: objectById.get(id)?.redacted ?? !objectById.has(id),
-      x: PADDING + level * columnStep,
-      y: PADDING + row * OBJECT_ROW_GAP,
+      x: direction === 'vertical' ? PADDING + row * VERTICAL_ROW_GAP : PADDING + level * columnStep,
+      y: direction === 'vertical' ? PADDING + level * VERTICAL_STEP : PADDING + row * OBJECT_ROW_GAP,
     })));
   const positionById = new Map(positionedObjects.map((object) => [object.objectId, object]));
   const linkLevels = new Map<number, GraphLink[]>();
@@ -91,8 +93,12 @@ function buildGraph(objects: GraphObject[], links: GraphLink[]) {
   const positionedLinks: PositionedLink[] = [...linkLevels].flatMap(([level, group]) =>
     group.map((link, row) => ({
       ...link,
-      x: PADDING + level * columnStep + OBJECT_WIDTH + COLUMN_GAP,
-      y: PADDING + row * RELATION_ROW_GAP + (OBJECT_HEIGHT - RELATION_HEIGHT) / 2,
+      x: direction === 'vertical'
+        ? PADDING + (OBJECT_WIDTH - RELATION_WIDTH) / 2 + row * VERTICAL_ROW_GAP
+        : PADDING + level * columnStep + OBJECT_WIDTH + COLUMN_GAP,
+      y: direction === 'vertical'
+        ? PADDING + level * VERTICAL_STEP + OBJECT_HEIGHT + 38
+        : PADDING + row * RELATION_ROW_GAP + (OBJECT_HEIGHT - RELATION_HEIGHT) / 2,
     })));
   const maxRows = Math.max(1, ...[...objectLevels.values()].map((group) => group.length));
   const maxRelations = Math.max(1, ...[...linkLevels.values()].map((group) => group.length));
@@ -100,9 +106,13 @@ function buildGraph(objects: GraphObject[], links: GraphLink[]) {
     objects: positionedObjects,
     links: positionedLinks,
     positionById,
-    width: PADDING * 2 + maxLevel * columnStep + OBJECT_WIDTH,
-    height: PADDING * 2 + Math.max((maxRows - 1) * OBJECT_ROW_GAP + OBJECT_HEIGHT,
-      (maxRelations - 1) * RELATION_ROW_GAP + OBJECT_HEIGHT),
+    width: direction === 'vertical'
+      ? PADDING * 2 + (Math.max(maxRows, maxRelations) - 1) * VERTICAL_ROW_GAP + OBJECT_WIDTH
+      : PADDING * 2 + maxLevel * columnStep + OBJECT_WIDTH,
+    height: direction === 'vertical'
+      ? PADDING * 2 + maxLevel * VERTICAL_STEP + OBJECT_HEIGHT
+      : PADDING * 2 + Math.max((maxRows - 1) * OBJECT_ROW_GAP + OBJECT_HEIGHT,
+        (maxRelations - 1) * RELATION_ROW_GAP + OBJECT_HEIGHT),
   };
 }
 
@@ -111,14 +121,21 @@ function connector(fromX: number, fromY: number, toX: number, toY: number) {
   return `M ${fromX} ${fromY} C ${fromX + bend} ${fromY}, ${toX - bend} ${toY}, ${toX} ${toY}`;
 }
 
-export function SnapshotRelationshipDag({ objects, links }: { objects: GraphObject[]; links: GraphLink[] }) {
+function verticalConnector(fromX: number, fromY: number, toX: number, toY: number) {
+  const bend = Math.min(40, Math.max(16, (toY - fromY) / 2));
+  return `M ${fromX} ${fromY} C ${fromX} ${fromY + bend}, ${toX} ${toY - bend}, ${toX} ${toY}`;
+}
+
+export function SnapshotRelationshipDag({ objects, links, direction = 'horizontal' }: {
+  objects: GraphObject[]; links: GraphLink[]; direction?: 'horizontal' | 'vertical';
+}) {
   if (!links.length) return <p className="text-sm text-muted-foreground">快照中没有可见的对象关系。</p>;
-  const graph = buildGraph(objects, links);
+  const graph = buildGraph(objects, links, direction);
   if (!graph) return <p className="text-sm text-muted-foreground">快照关系中存在环，无法按 DAG 排列。</p>;
 
-  return <div className="overflow-x-auto rounded-md border border-border bg-muted/20">
+  return <div className="overflow-auto rounded-md border border-border bg-muted/20">
     <svg width={graph.width} height={graph.height} viewBox={`0 0 ${graph.width} ${graph.height}`}
-      aria-label="快照对象关系有向无环图" className="block">
+      aria-label="快照对象关系有向无环图" className={direction === 'vertical' ? 'mx-auto block' : 'block'}>
       <defs>
         <marker id="snapshot-relationship-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4"
           orient="auto" markerUnits="userSpaceOnUse">
@@ -132,10 +149,18 @@ export function SnapshotRelationshipDag({ objects, links }: { objects: GraphObje
         const relationY = relation.y + RELATION_HEIGHT / 2;
         const toY = to.y + OBJECT_HEIGHT / 2;
         const lineStyle = { fill: 'none', stroke: 'hsl(var(--muted-foreground))', strokeWidth: 1.5, opacity: 0.65 };
+        const firstPath = direction === 'vertical'
+          ? verticalConnector(from.x + OBJECT_WIDTH / 2, from.y + OBJECT_HEIGHT,
+            relation.x + RELATION_WIDTH / 2, relation.y - 8)
+          : connector(from.x + OBJECT_WIDTH, fromY, relation.x - 8, relationY);
+        const secondPath = direction === 'vertical'
+          ? verticalConnector(relation.x + RELATION_WIDTH / 2, relation.y + RELATION_HEIGHT,
+            to.x + OBJECT_WIDTH / 2, to.y - 8)
+          : connector(relation.x + RELATION_WIDTH, relationY, to.x - 8, toY);
         return <g key={relation.id ?? `${relation.linkKey}:${relation.from}:${relation.to}:${index}`}>
-          <path d={connector(from.x + OBJECT_WIDTH, fromY, relation.x - 8, relationY)} {...lineStyle}
+          <path d={firstPath} {...lineStyle}
             markerEnd="url(#snapshot-relationship-arrow)" />
-          <path d={connector(relation.x + RELATION_WIDTH, relationY, to.x - 8, toY)} {...lineStyle}
+          <path d={secondPath} {...lineStyle}
             markerEnd="url(#snapshot-relationship-arrow)" />
         </g>;
       })}

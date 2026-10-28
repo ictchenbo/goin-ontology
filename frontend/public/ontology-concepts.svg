@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="2100" height="1600" viewBox="0 0 2100 1600" style="max-width:100%;height:auto" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="2100" height="1620" viewBox="0 0 2100 1620" style="max-width:100%;height:auto" role="img" aria-labelledby="title description">
   <title id="title">OODA 本体模型概念关系图</title>
-  <desc id="description">应用领域隔离本体定义、对象实例及决策数据，用户先选择有权访问的领域。每种概念只出现一次。定义关系连接 Interface、共享属性、对象类型、普通属性、只读计算属性、关系类型和决策类型。对象变化使自动化检查条件；自动化可引用独立定义的触发规则，并可调用独立定义的 Action；决策案例的 Orient 快照会冻结适用触发规则的判断，也可调用 Action。Action 校验后修改对象实例。对象实例关联关系实例、证据和决策案例。关系类型约束基数与自环许可，自环默认禁止；计算结果在读取时产生，不写入实例。</desc>
+  <desc id="description">应用领域隔离本体定义、对象实例及决策数据，用户先选择有权访问的领域。每种概念只出现一次。定义关系连接 Interface、共享属性、对象类型、普通属性、只读计算属性、关系类型和决策类型。对象变化使自动化检查条件；自动化可引用独立定义的触发规则，并可调用独立定义的 Action；决策案例的 Orient 快照会冻结适用触发规则的判断，也可调用 Action。Action 校验后修改对象实例。对象实例关联关系实例、证据和决策案例。公共安全演示增加跟进任务产生来源记录的关系实例；案例详情将冻结的本体关系按业务流程方向展示。关系类型约束基数与自环许可，自环默认禁止；计算结果在读取时产生，不写入实例。</desc>
   <defs>
     <linearGradient id="background" x2="1" y2="1"><stop stop-color="#f9fbff"/><stop offset="1" stop-color="#f0f5ff"/></linearGradient>
     <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1 9 5 1 9" fill="none" stroke="#5579c5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></marker>
@@ -122,7 +122,8 @@
     <rect width="320" height="100" rx="15"/><text class="node-title" x="20" y="41">决策案例</text><text class="node-sub" x="20" y="72">冻结事实、关系与规则提示</text>
   </g>
 
-  <rect x="54" y="1537" width="1992" height="49" rx="8" fill="#e5ecf8"/>
+  <rect x="54" y="1537" width="1992" height="69" rx="8" fill="#e5ecf8"/>
   <text class="note" x="76" y="1556">示例：出生日期 → 周岁函数（按业务时区取今天）→ 年龄；计算结果不入库，下次读取重新计算。</text>
   <text class="note" x="76" y="1577">战场态势：军机 → 机场/装备，军舰 → 港口/装备；活动事件 → 军机/军舰/区域，舰载机事件 → 航母；情报报告 → 活动事件。</text>
+  <text class="note" x="76" y="1598">公共安全演示：个案关联巡逻任务，巡逻任务产生来源记录；流程图按“来源 → 观察事件 → 个案 → 巡逻任务 → 巡逻记录 → 观察结果”呈现。</text>
 </svg>

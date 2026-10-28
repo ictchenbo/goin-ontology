@@ -14,6 +14,7 @@ import { Input, Label, Select, Textarea } from '@/components/ui/Input';
 import { ActionObjectParams } from '@/components/ActionObjectParams';
 import { SnapshotRelationshipDag } from '@/components/SnapshotRelationshipDag';
 import { formatNum, formatTime } from '@/lib/utils';
+import { publicSafetyRelationshipFlow } from '@/lib/case-relationship-flow';
 
 interface CriterionDef {
   key: string;
@@ -462,6 +463,10 @@ export function CaseDetailPage() {
   const snapshotById = new Map(snapshotObjects.map((object) => [object.objectId, object]));
   const snapshotLinks = [...new Map((snapshot?.links ?? []).map((link) =>
     [link.id ?? `${link.linkKey}:${link.from}:${link.to}`, link])).values()];
+  const publicSafetyFlow = detail.decisionTypeKey === 'ps_case_response'
+    ? publicSafetyRelationshipFlow(snapshotObjects, snapshotLinks) : null;
+  const relationshipLinks = publicSafetyFlow?.links ?? snapshotLinks;
+  const flowObjectIds = new Set(relationshipLinks.flatMap((link) => [link.from, link.to]));
   const rootSnapshotObject = snapshotObjects.find((object) => object.isRoot);
   const rootPayload = rootSnapshotObject?.payload ?? {};
   const observationTime = rootPayload.eventTime ?? rootPayload.detectedAt ?? rootPayload.observedAt;
@@ -620,14 +625,19 @@ export function CaseDetailPage() {
             <div className="space-y-3">
               <h3 className="font-semibold">对象之间的关系</h3>
               <SnapshotRelationshipDag
-                objects={snapshotObjects.map((object) => ({
+                objects={snapshotObjects.filter((object) => !publicSafetyFlow || flowObjectIds.has(object.objectId))
+                  .map((object) => ({
                   objectId: object.objectId,
                   title: object.redacted ? '无权查看' : snapshotTitle(object),
                   typeDisplay: object.redacted ? undefined : object.typeDisplay || object.typeKey,
                   isRoot: object.isRoot,
                   redacted: object.redacted,
                 }))}
-                links={snapshotLinks} />
+                links={relationshipLinks} direction={publicSafetyFlow ? 'vertical' : 'horizontal'} />
+              {publicSafetyFlow && <p className="text-xs text-muted-foreground">
+                箭头表示当前快照可追溯的业务顺序；规则提示与事实核实请分别查看下方规则判断和证据。
+              </p>}
+              {publicSafetyFlow?.notice && <Alert variant="warning">{publicSafetyFlow.notice}</Alert>}
             </div>
           )}
           {detail.snapshotId && (
