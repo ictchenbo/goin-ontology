@@ -55,8 +55,10 @@ interface SnapshotObject {
   objectId: string;
   title?: string;
   typeKey?: string;
+  typeDisplay?: string;
   isRoot?: boolean;
   redacted?: boolean;
+  payload?: Record<string, unknown>;
   evidence?: Array<{
     evidenceId: string;
     claim?: string;
@@ -64,6 +66,64 @@ interface SnapshotObject {
     stance?: string;
     observedAt?: string;
   }>;
+}
+
+interface SnapshotView {
+  objects?: SnapshotObject[];
+  links?: Array<{ id?: string; from: string; to: string; linkKey: string; linkDisplay?: string }>;
+  ruleChecks?: Array<{
+    objectId: string;
+    ruleKey: string;
+    name: string;
+    description?: string;
+    version: number;
+    expression: string;
+    inputDeps: string[];
+    matched: boolean | null;
+    error?: string;
+  }> | null;
+  conflicts?: Array<{ kind: string; message: string }>;
+  createdAt?: string;
+}
+
+function snapshotTitle(object: SnapshotObject): string {
+  // 旧快照保留原编号；用冻结的描述和日期生成可读的展示名。
+  if (object.typeKey === 'ObservedEvent' && /^EVT-\d{4}-\d{3}$/.test(object.title ?? '')) {
+    const description = object.payload?.description;
+    const eventTime = object.payload?.eventTime;
+    if (typeof description === 'string' && typeof eventTime === 'string') {
+      const eventDate = new Date(eventTime);
+      const date = Number.isNaN(eventDate.getTime()) ? '' : `${eventDate.getFullYear()}${String(eventDate.getMonth() + 1).padStart(2, '0')}${String(eventDate.getDate()).padStart(2, '0')}`;
+      if (/^\d{8}$/.test(date)) {
+        if (description === '市民反映某人行为异常（虚构误报示例）') return `市民疑似异常行为反映-${date}-001`;
+        if (description === '巡逻记录显示该时段一切正常（反证）') return `广场巡逻未见异常-${date}-002`;
+        return `${description.replace(/（[^）]*）/g, '').trim()}-${date}-${object.title!.slice(-3)}`;
+      }
+    }
+  }
+  if (object.typeKey === 'RiskIndicator' && object.title === 'RI-行为异常'
+    && object.payload?.basedOnEvent === 'EVT-2026-001') {
+    return '单源行为线索指标-20261009-001';
+  }
+  if (object.typeKey === 'SafetyCase' && object.title === 'PS-2026-001'
+    && object.payload?.purposeStatement === '依法核查可能影响公共安全的行为事件') {
+    return '公共安全核查个案-20261009-001';
+  }
+  return object.title || object.objectId;
+}
+
+function snapshotValue(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '未提供';
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
+function snapshotInput(dependency: string, object?: SnapshotObject): string {
+  if (!dependency.startsWith('object.')) return dependency;
+  const field = dependency.slice('object.'.length);
+  const value = field.split('.').reduce<unknown>((current, key) =>
+    current && typeof current === 'object' ? (current as Record<string, unknown>)[key] : undefined,
+  object?.payload);
+  return `${field} = ${snapshotValue(value)}`;
 }
 
 interface CaseDetail {
@@ -213,7 +273,7 @@ export function CaseDetailPage() {
   const [actualJson, setActualJson] = useState('{"service": 75}');
   const [evidenceRefsText, setEvidenceRefsText] = useState('');
   const [availableEvidenceIds, setAvailableEvidenceIds] = useState<string[]>([]);
-  const [snapshotObjects, setSnapshotObjects] = useState<SnapshotObject[]>([]);
+  const [snapshot, setSnapshot] = useState<SnapshotView | null>(null);
   const [reviewNotes, setReviewNotes] = useState('');
   const [aiSuggestions, setAiSuggestions] = useState<AiSuggestion[]>([]);
   const [aiKind, setAiKind] = useState('explain');
@@ -238,17 +298,17 @@ export function CaseDetailPage() {
       const suggestions = await api.get<{ items: AiSuggestion[] }>(`/cases/${caseId}/ai-suggestions`);
       setAiSuggestions(suggestions.items);
       if (d.snapshotId) {
-        const snapshot = await api.get<{ objects?: SnapshotObject[] }>(
+        const snapshotResult = await api.get<SnapshotView>(
           `/snapshots/${d.snapshotId}`
         );
-        const snapshotItems = snapshot.objects ?? [];
-        setSnapshotObjects(snapshotItems);
+        const snapshotItems = snapshotResult.objects ?? [];
+        setSnapshot(snapshotResult);
         const ids = [...new Set(snapshotItems.flatMap((o) =>
           (o.evidence ?? []).map((e) => e.evidenceId)))];
         setAvailableEvidenceIds(ids);
         setEvidenceRefsText((old) => old || ids[0] || '');
       } else {
-        setSnapshotObjects([]);
+        setSnapshot(null);
         setAvailableEvidenceIds([]);
       }
       const winner = d.scoreRun?.winnerAlternativeId;
@@ -397,6 +457,15 @@ export function CaseDetailPage() {
   const scores = detail.scores || [];
   const factsComplete = detail.facts?.factsComplete ?? detail.scoreRun?.factsComplete;
   const missingFacts = detail.facts?.missing ?? detail.scoreRun?.missingFacts ?? [];
+  const snapshotObjects = snapshot?.objects ?? [];
+  const snapshotById = new Map(snapshotObjects.map((object) => [object.objectId, object]));
+  const snapshotLinks = [...new Map((snapshot?.links ?? []).map((link) =>
+    [link.id ?? `${link.linkKey}:${link.from}:${link.to}`, link])).values()];
+  const rootSnapshotObject = snapshotObjects.find((object) => object.isRoot);
+  const rootPayload = rootSnapshotObject?.payload ?? {};
+  const observationTime = rootPayload.eventTime ?? rootPayload.detectedAt ?? rootPayload.observedAt;
+  const observationDescription = rootPayload.description ?? rootPayload.content ?? rootPayload.statement;
+  const indicatorObjects = snapshotObjects.filter((object) => object.typeKey === 'RiskIndicator');
   const decision = detail.decision
     || (detail.decisionRecord
       ? {
@@ -529,11 +598,80 @@ export function CaseDetailPage() {
               缺失事实字段：{missingFacts.join(', ')}
             </Alert>
           )}
+          {rootSnapshotObject && !rootSnapshotObject.redacted && (
+            <div className="rounded-md border border-border bg-muted/30 p-4">
+              <h3 className="font-semibold">观察到的事件 / 数据</h3>
+              <p className="mt-1 text-sm text-muted-foreground">以下字段来自当前 Orient 快照；未核实的描述仍是待核查的反映。</p>
+              <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+                <div><dt className="text-muted-foreground">触发对象</dt><dd className="font-medium">{snapshotTitle(rootSnapshotObject)}</dd></div>
+                <div><dt className="text-muted-foreground">类型</dt><dd>{rootSnapshotObject.typeDisplay || rootSnapshotObject.typeKey || '—'}</dd></div>
+                {typeof observationTime === 'string' && <div><dt className="text-muted-foreground">发生 / 观测时间</dt><dd>{formatTime(observationTime)}</dd></div>}
+                {rootPayload.location != null && <div><dt className="text-muted-foreground">地点</dt><dd>{snapshotValue(rootPayload.location)}</dd></div>}
+                {observationDescription != null && <div className="sm:col-span-2"><dt className="text-muted-foreground">记录内容</dt><dd>{snapshotValue(observationDescription)}</dd></div>}
+                {rootPayload.verificationStatus != null && <div><dt className="text-muted-foreground">核实状态</dt><dd>{({
+                  unverified: '未核实', partial: '部分核实', verified: '已核实', corrected: '已更正',
+                } as Record<string, string>)[String(rootPayload.verificationStatus)] || snapshotValue(rootPayload.verificationStatus)}</dd></div>}
+                {rootPayload.sourceCount != null && <div><dt className="text-muted-foreground">来源数字段</dt><dd>{snapshotValue(rootPayload.sourceCount)}</dd></div>}
+              </dl>
+            </div>
+          )}
+          {detail.snapshotId && (
+            <div className="space-y-3">
+              <h3 className="font-semibold">对象之间的关系</h3>
+              {snapshotLinks.length ? <div className="rounded-md border border-border"><Table>
+                <THeader><TR><TH>起点</TH><TH>关系</TH><TH>终点</TH></TR></THeader>
+                <TBody>{snapshotLinks.map((link) => <TR key={link.id ?? `${link.linkKey}:${link.from}:${link.to}`}>
+                  <TD>{snapshotById.get(link.from) ? snapshotTitle(snapshotById.get(link.from)!) : '无权查看'}</TD>
+                  <TD className="font-medium">{link.linkDisplay || link.linkKey} →</TD>
+                  <TD>{snapshotById.get(link.to) ? snapshotTitle(snapshotById.get(link.to)!) : '无权查看'}</TD>
+                </TR>)}</TBody>
+              </Table></div> : <p className="text-sm text-muted-foreground">快照中没有可见的对象关系。</p>}
+            </div>
+          )}
+          {detail.snapshotId && (
+            <div className="space-y-3">
+              <h3 className="font-semibold">规则判断</h3>
+              {snapshot?.ruleChecks == null ? (
+                <Alert variant="warning">此快照未保存规则判断结果；重新执行 Orient 快照后可核对规则输入与命中情况。</Alert>
+              ) : snapshot.ruleChecks.length ? (
+                <div className="rounded-md border border-border"><Table>
+                  <THeader><TR><TH>适用对象 / 规则</TH><TH>输入与条件</TH><TH>结果</TH></TR></THeader>
+                  <TBody>{snapshot.ruleChecks.map((check) => <TR key={`${check.objectId}:${check.ruleKey}`}>
+                    <TD className="min-w-56 align-top">
+                      <div className="font-medium">{snapshotById.get(check.objectId) ? snapshotTitle(snapshotById.get(check.objectId)!) : '对象不可见'}</div>
+                      <Link to={`/ontology/rules/${encodeURIComponent(check.ruleKey)}`}
+                        className="text-primary hover:underline">{check.name} · v{check.version}</Link>
+                      {check.description && <div className="text-xs text-muted-foreground">{check.description}</div>}
+                    </TD>
+                    <TD className="min-w-64 align-top">
+                      <div>{check.inputDeps.length ? check.inputDeps.map((dependency) =>
+                        snapshotInput(dependency, snapshotById.get(check.objectId))).join('；') : '无显式输入字段'}</div>
+                      <code className="mt-1 block break-all text-xs text-muted-foreground">{check.expression}</code>
+                    </TD>
+                    <TD className="align-top">{check.error ? <Badge variant="destructive">计算失败</Badge>
+                      : <Badge variant={check.matched ? 'warning' : 'secondary'}>{check.matched ? '提示命中' : '未命中'}</Badge>}
+                      {check.error && <div className="mt-1 text-xs text-muted-foreground">{check.error}</div>}</TD>
+                  </TR>)}</TBody>
+                </Table></div>
+              ) : <p className="text-sm text-muted-foreground">当前快照没有适用的触发规则判断。</p>}
+              {indicatorObjects.length > 0 && <Alert variant="warning">
+                快照包含{indicatorObjects.length}个风险指标对象，但没有保存这些指标的生成规则运行记录。指标数值不能作为异常已被规则证实的结论。
+              </Alert>}
+              {(snapshot?.conflicts ?? []).length > 0 && <div className="text-sm">
+                <p className="font-medium">反证与其他冲突提示</p>
+                <ul className="mt-1 list-inside list-disc text-muted-foreground">
+                  {snapshot!.conflicts!.map((conflict, index) => <li key={`${conflict.kind}:${index}`}>{conflict.message}</li>)}
+                </ul>
+              </div>}
+            </div>
+          )}
           {detail.snapshotId ? (
-            <div className="rounded-md border border-border">
+            <div className="space-y-3">
+              <h3 className="font-semibold">快照对象与证据</h3>
+              <div className="rounded-md border border-border">
               <Table>
                 <THeader><TR>
-                  <TH>相关对象</TH><TH>类型</TH><TH>角色</TH><TH>证据</TH>
+                  <TH>相关对象</TH><TH>类型 / 角色</TH><TH>记录内容 / 数据</TH><TH>证据</TH>
                 </TR></THeader>
                 <TBody>
                   {snapshotObjects.map((object) => (
@@ -545,14 +683,31 @@ export function CaseDetailPage() {
                           <>
                             <Link to={`/objects/${encodeURIComponent(object.objectId)}`}
                               className="font-medium text-primary hover:underline">
-                              {object.title || object.objectId}
+                              {snapshotTitle(object)}
                             </Link>
-                            {object.title && <div className="font-mono text-xs text-muted-foreground">{object.objectId}</div>}
+                            <div className="font-mono text-xs text-muted-foreground">{object.objectId}</div>
                           </>
                         )}
                       </TD>
-                      <TD className="align-top">{object.typeKey || '—'}</TD>
-                      <TD className="align-top">{object.isRoot ? '触发对象' : '关联对象'}</TD>
+                      <TD className="align-top">
+                        <div>{object.typeDisplay || object.typeKey || '—'}</div>
+                        <div className="text-xs text-muted-foreground">{object.isRoot ? '触发对象' : '关联对象'}</div>
+                      </TD>
+                      <TD className="min-w-56 align-top">{object.payload ? (
+                        <div className="space-y-1">
+                          {object.payload.description != null && <div>{snapshotValue(object.payload.description)}</div>}
+                          {object.payload.content != null && <div>{snapshotValue(object.payload.content)}</div>}
+                          {typeof object.payload.eventTime === 'string' && <div>事件时间：{formatTime(object.payload.eventTime)}</div>}
+                          {object.payload.channel != null && <div>渠道：{({
+                            report: '市民反映', patrol: '巡逻记录', sensor: '传感器', public: '公开来源',
+                          } as Record<string, string>)[String(object.payload.channel)] || snapshotValue(object.payload.channel)}</div>}
+                          {object.payload.reliability != null && <div>可靠性：{snapshotValue(object.payload.reliability)}</div>}
+                          {object.payload.value != null && <div>指标值：{snapshotValue(object.payload.value)}</div>}
+                          {object.payload.purposeStatement != null && <div>{snapshotValue(object.payload.purposeStatement)}</div>}
+                          {!['description', 'content', 'eventTime', 'channel', 'reliability', 'value', 'purposeStatement']
+                            .some((key) => object.payload?.[key] != null) && <span className="text-muted-foreground">—</span>}
+                        </div>
+                      ) : '—'}</TD>
                       <TD className="min-w-64 align-top">
                         {object.evidence?.length ? (
                           <ul className="space-y-2">
@@ -573,6 +728,7 @@ export function CaseDetailPage() {
                 </TBody>
               </Table>
               {snapshotObjects.length === 0 && <p className="p-3 text-sm text-muted-foreground">快照中暂无可见对象。</p>}
+              </div>
             </div>
           ) : <p className="text-sm text-muted-foreground">尚无 Orient 快照，执行快照后可查看相关对象和证据。</p>}
           <div className="flex flex-wrap gap-2">

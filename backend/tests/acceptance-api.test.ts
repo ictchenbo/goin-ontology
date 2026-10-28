@@ -149,6 +149,29 @@ test('公共安全法定措施缺少有效授权时被拒', async () => {
   assert.equal(blocked.status, 400);
 });
 
+test('Orient 快照保留观察事实、关系与规则提示的可追溯结果', async () => {
+  const cases = await request('GET', '/cases?decisionTypeKey=ps_case_response', 'analyst');
+  const detail = await request('GET', `/cases/${cases.data.items[0].id}`, 'analyst');
+  const response = await request('GET', `/snapshots/${detail.data.snapshotId}`, 'analyst');
+  assert.equal(response.status, 200, JSON.stringify(response.data));
+  const snapshot = response.data;
+  const root = snapshot.objects.find((item: any) => item.isRoot);
+  assert.equal(root.title, '市民疑似异常行为反映-20261009-001');
+  assert.equal(root.payload.name, 'EVT-2026-001');
+  assert.equal(root.typeDisplay, '观察事件');
+  assert.match(root.payload.description, /市民反映/);
+  assert.ok(snapshot.links.some((link: any) => link.linkKey === 'event_from_source'
+    && link.from === root.objectId && link.linkDisplay === '事件来自来源'));
+  const check = snapshot.ruleChecks.find((item: any) => item.objectId === root.objectId
+    && item.ruleKey === 'ps_single_source_flag');
+  assert.equal(check.matched, true);
+  assert.ok(check.inputDeps.includes('object.sourceCount'));
+  assert.match(check.description, /不证明异常行为成立/);
+  assert.ok(snapshot.conflicts.some((item: any) => item.kind === 'counter_evidence'));
+  assert.equal(snapshot.ruleChecks.some((item: any) =>
+    snapshot.objects.find((object: any) => object.objectId === item.objectId)?.typeKey === 'RiskIndicator'), false);
+});
+
 test('案例退回与重新提交会使旧审批失效', async () => {
   const cases = await request('GET', '/cases?decisionTypeKey=ps_case_response', 'analyst');
   const caseId = cases.data.items[0].id;

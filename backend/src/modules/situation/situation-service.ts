@@ -27,6 +27,17 @@ export interface SituationSnapshot {
   links: any[];
   metrics: Record<string, unknown>;
   ruleVersions: Record<string, number>;
+  ruleChecks: Array<{
+    objectId: string;
+    ruleKey: string;
+    name: string;
+    description: string;
+    version: number;
+    expression: string;
+    inputDeps: string[];
+    matched: boolean | null;
+    error?: string;
+  }> | null;
   conflicts: Array<{ kind: string; message: string; refs: string[] }>;
   assumptions: any[];
   freshness: { fresh: boolean; ageDays: number }[];
@@ -94,6 +105,8 @@ export function buildSituationSnapshot(input: OrientInput): SituationSnapshot {
     objects.push({
       objectId: node.objectId,
       typeKey: node.typeKey,
+      typeDisplay: (db.prepare('SELECT display_name FROM ontology_type WHERE type_key = ?')
+        .get(node.typeKey) as { display_name?: string } | undefined)?.display_name ?? node.typeKey,
       title: full.title,
       revision: full.revision,
       payload: JSON.parse(full.payload_json),
@@ -118,6 +131,30 @@ export function buildSituationSnapshot(input: OrientInput): SituationSnapshot {
   // 规则版本
   const ruleVersions: Record<string, number> = {};
   for (const r of listRules()) ruleVersions[r.ruleKey] = r.version;
+  const ruleChecks: NonNullable<SituationSnapshot['ruleChecks']> = [];
+  const capturedAt = nowIso();
+  for (const rule of listRules('trigger').filter((item) => item.state === 'published' && item.scopeType)) {
+    for (const object of objects.filter((item) => item.typeKey === rule.scopeType && !item.redacted)) {
+      const check = {
+        objectId: object.objectId,
+        ruleKey: rule.ruleKey,
+        name: rule.name,
+        description: rule.description,
+        version: rule.version,
+        expression: rule.expression,
+        inputDeps: rule.inputDeps,
+        matched: null as boolean | null,
+        error: undefined as string | undefined,
+      };
+      try {
+        check.matched = evaluateBoolean(rule.expression,
+          { object: object.payload, metrics, now: capturedAt });
+      } catch (error) {
+        check.error = error instanceof Error ? error.message : '规则求值失败';
+      }
+      ruleChecks.push(check);
+    }
+  }
 
   // 冲突检测：同类关键指标差异、证据矛盾标记、过期事实
   const conflicts = detectConflicts(objects, metrics, freshness, maxAgeDays);
@@ -154,13 +191,17 @@ export function buildSituationSnapshot(input: OrientInput): SituationSnapshot {
     caseId: input.caseId,
     kind: 'orient',
     objects,
-    links: nb.edges,
+    links: nb.edges.map((edge) => ({ ...edge,
+      linkDisplay: (db.prepare('SELECT display_name FROM link_def WHERE link_key = ?')
+        .get(edge.linkKey) as { display_name?: string } | undefined)?.display_name ?? edge.linkKey,
+    })),
     metrics,
     ruleVersions,
+    ruleChecks,
     conflicts,
     assumptions,
     freshness,
-    createdAt: nowIso(),
+    createdAt: capturedAt,
   };
 
   const snapshotLabels = mergeLabels(
@@ -170,11 +211,11 @@ export function buildSituationSnapshot(input: OrientInput): SituationSnapshot {
   );
   const tx = db.transaction(() => {
     db.prepare(`INSERT INTO case_snapshot
-      (id, case_id, kind, objects_json, links_json, metrics_json, rule_versions_json, conflicts_json, assumptions_json, created_by, created_at, freshness_json)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-      snapshotId, input.caseId, 'orient', JSON.stringify(objects), JSON.stringify(nb.edges),
+      (id, case_id, kind, objects_json, links_json, metrics_json, rule_versions_json, conflicts_json, assumptions_json, created_by, created_at, freshness_json, rule_checks_json)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      snapshotId, input.caseId, 'orient', JSON.stringify(objects), JSON.stringify(snapshot.links),
       JSON.stringify(metrics), JSON.stringify(ruleVersions), JSON.stringify(conflicts),
-      JSON.stringify(assumptions), input.actor.username, nowIso(), JSON.stringify(freshness)
+      JSON.stringify(assumptions), input.actor.username, capturedAt, JSON.stringify(freshness), JSON.stringify(ruleChecks)
     );
     // 更新案例快照指针与冻结对象
     db.prepare('UPDATE decision_case SET snapshot_id = ?, model_version_ref = ?, security_labels = ?, updated_at = ? WHERE id = ?')
@@ -206,18 +247,40 @@ export function getSnapshot(snapshotId: string, actor?: AuthUser): SituationSnap
   if (!row) throw new AppError('NOT_FOUND', `快照不存在: ${snapshotId}`);
   if (actor) requireCaseAccess(actor, row.case_id);
   const objects = JSON.parse(row.objects_json || '[]');
+  const visibleObjects = actor ? objects.filter((o: any) => !o.securityLabels || clearanceAllows(actor, o.securityLabels))
+    .map((o: any) => ({
+      ...o,
+      payload: o.payload ? redactFields(actor, o.payload, o.typeKey) : o.payload,
+      evidence: (o.evidence ?? []).filter((e: any) => clearanceAllows(actor, e.securityLabels ?? ['PUBLIC'])),
+    })) : objects;
+  const visibleById = new Map<string, any>(visibleObjects.map((object: any) => [object.objectId, object]));
+  const storedChecks: SituationSnapshot['ruleChecks'] = row.rule_checks_json === null
+    ? null : JSON.parse(row.rule_checks_json || '[]');
   return {
     id: row.id,
     caseId: row.case_id,
     kind: row.kind,
-    objects: actor ? objects.filter((o: any) => !o.securityLabels || clearanceAllows(actor, o.securityLabels)).map((o: any) => ({
-      ...o,
-      payload: o.payload ? redactFields(actor, o.payload, o.typeKey) : o.payload,
-      evidence: (o.evidence ?? []).filter((e: any) => clearanceAllows(actor, e.securityLabels ?? ['PUBLIC'])),
-    })) : objects,
-    links: JSON.parse(row.links_json || '[]'),
+    objects: visibleObjects.map((object: any) => ({ ...object,
+      typeDisplay: object.typeDisplay ?? (getDb().prepare('SELECT display_name FROM ontology_type WHERE type_key = ?')
+        .get(object.typeKey) as { display_name?: string } | undefined)?.display_name ?? object.typeKey,
+    })),
+    links: (JSON.parse(row.links_json || '[]') as any[])
+      .filter((edge) => visibleById.has(edge.from) && visibleById.has(edge.to))
+      .map((edge) => ({ ...edge,
+        linkDisplay: edge.linkDisplay ?? (getDb().prepare('SELECT display_name FROM link_def WHERE link_key = ?')
+          .get(edge.linkKey) as { display_name?: string } | undefined)?.display_name ?? edge.linkKey,
+      })),
     metrics: JSON.parse(row.metrics_json || '{}'),
     ruleVersions: JSON.parse(row.rule_versions_json || '{}'),
+    ruleChecks: storedChecks?.filter((check) => {
+      const object = visibleById.get(check.objectId);
+      if (!object) return false;
+      return !actor || check.inputDeps.every((dependency) => {
+        if (!dependency.startsWith('object.')) return true;
+        const field = dependency.slice('object.'.length).split('.')[0];
+        return Object.hasOwn(object.payload ?? {}, field);
+      });
+    }) ?? null,
     conflicts: JSON.parse(row.conflicts_json || '[]'),
     assumptions: JSON.parse(row.assumptions_json || '[]'),
     freshness: JSON.parse(row.freshness_json || '[]'),

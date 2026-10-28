@@ -167,7 +167,9 @@ function seedScenarioPack(packKey: string, actor: AuthUser): Record<string, stri
         attachEvidence({
           objectId: objId,
           sourceId: src.id,
-          claim: `种子来源：${o.title ?? o.typeKey}`,
+          claim: pack.key === 'public-safety'
+            ? String(o.payload.description ?? o.title ?? o.typeKey)
+            : `种子来源：${o.title ?? o.typeKey}`,
           observedAt,
           actor: actor.username,
         });
