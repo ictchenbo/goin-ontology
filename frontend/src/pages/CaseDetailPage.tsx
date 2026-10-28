@@ -319,8 +319,10 @@ export function CaseDetailPage() {
           || d.decisionRecord?.selectedAlternativeId;
         const scoredIds = new Set((d.scores ?? []).filter((score) => score.feasible)
           .map((score) => score.alternativeId));
+        const scoreCurrent = d.scoreRun?.current === true
+          && d.facts?.factsComplete !== false && d.facts?.stale !== true;
         const feasibleIds = new Set(d.alternatives.filter((alternative) =>
-          scoredIds.has(alternative.id) &&
+          scoreCurrent && scoredIds.has(alternative.id) &&
           (alternative.status === 'feasible' || alternative.status === 'selected'))
           .map((alternative) => alternative.id));
         const currentDecision = (d.decision?.scoreRunId || d.decisionRecord?.scoreRunId)
@@ -485,8 +487,9 @@ export function CaseDetailPage() {
   const scoreByAlternative = new Map(scores.map((score) => [score.alternativeId, score]));
   const selectedScore = scoreByAlternative.get(selectedAlt);
   const selectableAlternatives = (detail.alternatives ?? []).filter((alternative) =>
-    scoreByAlternative.get(alternative.id)?.feasible === true &&
+    decisionReady && scoreByAlternative.get(alternative.id)?.feasible === true &&
     (alternative.status === 'feasible' || alternative.status === 'selected'));
+  const selectedAltIsSelectable = selectableAlternatives.some((alternative) => alternative.id === selectedAlt);
   const currentDecision = !!decision && decision.scoreRunId === detail.scoreRun?.id && decisionReady;
   const missingActionParams = actionSchema && resolvedAction && actionSchema.key === resolvedAction.actionKey
     ? actionSchema.required.filter((key) => {
@@ -1150,17 +1153,22 @@ export function CaseDetailPage() {
               {alternative.name}不可选：{reasons.join('；') || '未通过硬约束'}
             </Alert>;
           })}
+          {state === 'OptionsReady' && selectableAlternatives.length === 0 && (
+            <Alert variant="warning">
+              当前没有可选方案，请到“方案与评估”核对原因并重新评分。
+            </Alert>
+          )}
 
           <div className="flex flex-wrap items-end gap-2">
             <div className="w-64">
               <Label htmlFor="altSelect">选定方案</Label>
-              <Select id="altSelect" value={selectedAlt} disabled={state !== 'OptionsReady' || selectableAlternatives.length === 0}
+              <Select id="altSelect" value={selectedAltIsSelectable ? selectedAlt : ''}
+                disabled={state !== 'OptionsReady' || selectableAlternatives.length === 0}
                 onChange={(e) => setSelectedAlt(e.target.value)}>
-                {!selectedAlt && <option value="">请先评分并选择可行方案</option>}
-                {(detail.alternatives || []).map((a) => (
-                  <option key={a.id} value={a.id} disabled={!selectableAlternatives.some((item) => item.id === a.id)}>
-                    {a.name}{scoreByAlternative.get(a.id)?.feasible === false ? ' · 不可行' :
-                      !scoreByAlternative.has(a.id) ? ' · 未评分' : ''}
+                {!selectedAltIsSelectable && <option value="">请先评分并选择可行方案</option>}
+                {selectableAlternatives.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
                   </option>
                 ))}
               </Select>
@@ -1177,8 +1185,7 @@ export function CaseDetailPage() {
             </div>
             {canDecide && state === 'OptionsReady' && (
               <Button
-                disabled={busy || !selectedAlt || !decisionReady || !selectedScore?.feasible
-                  || !selectableAlternatives.some((alternative) => alternative.id === selectedAlt)}
+                disabled={busy || !selectedAltIsSelectable || !selectedScore?.feasible}
                 onClick={() =>
                   runAction('记录决策', () =>
                     api
