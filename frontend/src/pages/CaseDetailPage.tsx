@@ -267,8 +267,14 @@ export function CaseDetailPage() {
   // 推演
   const [scenarioOverlay, setScenarioOverlay] = useState('{}');
 
-  const [actionSchema, setActionSchema] = useState<{ key: string; required: string[] } | null>(null);
+  const [actionSchema, setActionSchema] = useState<{
+    key: string;
+    required: string[];
+    properties: Record<string, { type?: string }>;
+  } | null>(null);
   const [actionSchemaError, setActionSchemaError] = useState('');
+  const [repairingAltId, setRepairingAltId] = useState<string | null>(null);
+  const [repairParams, setRepairParams] = useState<Record<string, unknown>>({});
 
   // 复盘表单
   const [expectedJson, setExpectedJson] = useState('{"service": 80}');
@@ -402,17 +408,18 @@ export function CaseDetailPage() {
   /** 从选定方案解析待执行动作（场景感知，不再硬编码供应链动作） */
   const resolvedAction = useMemo(() => {
     if (!detail) return null;
-    const altId = detail.decision?.alternativeId
+    const recordedAltId = detail.decision?.alternativeId
       || detail.decision?.selectedAlternativeId
-      || detail.decisionRecord?.selectedAlternativeId
-      || selectedAlt;
+      || detail.decisionRecord?.selectedAlternativeId;
+    const altId = detail.state === 'OptionsReady' ? selectedAlt || recordedAltId : recordedAltId || selectedAlt;
     const alt = detail.alternatives?.find((a) => a.id === altId);
     if (!alt) return null;
-    const actions = (alt.proposedActions ?? []).filter((p) => p && typeof p === 'object');
-    const withKey = actions.find((p) => typeof p.actionKey === 'string' && p.actionKey);
+    const actionIndex = (alt.proposedActions ?? []).findIndex((p) => p && typeof p.actionKey === 'string' && p.actionKey);
+    const withKey = actionIndex >= 0 ? alt.proposedActions?.[actionIndex] : undefined;
     if (withKey) {
       return {
         alternativeId: alt.id,
+        actionIndex,
         actionKey: String(withKey.actionKey),
         defaultParams: (withKey.params ?? {}) as Record<string, unknown>,
       };
@@ -423,11 +430,12 @@ export function CaseDetailPage() {
       const { actionKey, params, ...rest } = flat as { actionKey: string; params?: Record<string, unknown> };
       return {
         alternativeId: alt.id,
+        actionIndex: -1,
         actionKey,
         defaultParams: (params ?? rest) as Record<string, unknown>,
       };
     }
-    return { alternativeId: alt.id, actionKey: '', defaultParams: {} as Record<string, unknown> };
+    return { alternativeId: alt.id, actionIndex: -1, actionKey: '', defaultParams: {} as Record<string, unknown> };
   }, [detail, selectedAlt]);
 
   // 执行参数必须来自已批准方案；读取 Action 定义以提示旧方案缺失的必填项。
@@ -437,9 +445,13 @@ export function CaseDetailPage() {
     setActionSchemaError('');
     if (!actionKey) return;
     let active = true;
-    api.get<{ paramsSchema?: { required?: string[] } }>(`/action-types/${encodeURIComponent(actionKey)}`)
+    api.get<{ paramsSchema?: { required?: string[]; properties?: Record<string, { type?: string }> } }>(`/action-types/${encodeURIComponent(actionKey)}`)
       .then((definition) => {
-        if (active) setActionSchema({ key: actionKey, required: definition.paramsSchema?.required ?? [] });
+        if (active) setActionSchema({
+          key: actionKey,
+          required: definition.paramsSchema?.required ?? [],
+          properties: definition.paramsSchema?.properties ?? {},
+        });
       })
       .catch((error: ApiError) => {
         if (active) setActionSchemaError(error.message || '无法读取 Action 参数定义');
@@ -496,6 +508,10 @@ export function CaseDetailPage() {
       const value = resolvedAction.defaultParams[key];
       return value === undefined || value === null || value === '';
     }) : [];
+  const repairMissingParams = actionSchema?.required.filter((key) => {
+    const value = repairParams[key];
+    return value === undefined || value === null || value === '';
+  }) ?? [];
   const criteria = detail.decisionType?.criteria ?? [];
   const pendingApproval = state === 'PendingApproval'
     ? detail.approvals?.find((a) => a.status === 'pending') : undefined;
@@ -1164,7 +1180,7 @@ export function CaseDetailPage() {
               <Label htmlFor="altSelect">选定方案</Label>
               <Select id="altSelect" value={selectedAltIsSelectable ? selectedAlt : ''}
                 disabled={state !== 'OptionsReady' || selectableAlternatives.length === 0}
-                onChange={(e) => setSelectedAlt(e.target.value)}>
+                onChange={(e) => { setSelectedAlt(e.target.value); setRepairingAltId(null); }}>
                 {!selectedAltIsSelectable && <option value="">请先评分并选择可行方案</option>}
                 {selectableAlternatives.map((a) => (
                   <option key={a.id} value={a.id}>
@@ -1183,6 +1199,66 @@ export function CaseDetailPage() {
                 placeholder="选择依据、关键权衡"
               />
             </div>
+            {state === 'OptionsReady' && decisionReady && selectedAltIsSelectable
+              && resolvedAction?.actionKey && actionSchemaError && (
+              <Alert variant="error" className="w-full">无法核对动作参数：{actionSchemaError}</Alert>
+            )}
+            {state === 'OptionsReady' && decisionReady && selectedAltIsSelectable
+              && resolvedAction?.actionKey && missingActionParams.length > 0 && (
+              <Alert variant="warning" className="w-full">
+                所选方案缺少动作参数：{missingActionParams.join('、')}。请补全后重新评分、记录决策，再提交审批。
+                {canDecide && state === 'OptionsReady' && resolvedAction.actionIndex >= 0 && (
+                  <Button size="sm" variant="outline" className="ml-3" onClick={() => {
+                    const rootObjectId = detail.caseObjects?.find((item) => item.role === 'trigger')?.objectId
+                      || detail.objects?.find((item) => item.role === 'trigger')?.objectId;
+                    setRepairParams({ ...resolvedAction.defaultParams,
+                      ...(rootObjectId && !resolvedAction.defaultParams.objectId ? { objectId: rootObjectId } : {}) });
+                    setRepairingAltId(resolvedAction.alternativeId);
+                  }}>
+                    补全动作参数
+                  </Button>
+                )}
+              </Alert>
+            )}
+            {repairingAltId === selectedAlt && resolvedAction && actionSchema?.key === resolvedAction.actionKey && (
+              <div className="w-full space-y-3 rounded-md border border-border p-3">
+                <p className="text-sm font-medium">补全“{altName(selectedAlt)}”的动作参数</p>
+                <ActionObjectParams actionKey={resolvedAction.actionKey} params={repairParams}
+                  targetTypeKey={detail.decisionType?.targetObjectType}
+                  onChange={(key, objectId) => setRepairParams((current) => ({ ...current, [key]: objectId }))} />
+                {actionSchema.required.filter((key) => key !== 'objectId' && !key.endsWith('ObjectId')
+                  && key !== 'legalAuthorityId').map((key) => {
+                  const type = actionSchema.properties[key]?.type;
+                  return <div key={key} className="space-y-1">
+                    <Label htmlFor={`repair-${key}`}>{key === 'reason' ? '核查理由' : key}（{key}）*</Label>
+                    {type === 'boolean' ? (
+                      <Select id={`repair-${key}`} value={String(repairParams[key] ?? '')}
+                        onChange={(event) => setRepairParams((current) => ({ ...current, [key]: event.target.value === 'true' }))}>
+                        <option value="">请选择</option><option value="true">是</option><option value="false">否</option>
+                      </Select>
+                    ) : (
+                      <Input id={`repair-${key}`} type={type === 'number' ? 'number' : 'text'}
+                        value={String(repairParams[key] ?? '')}
+                        onChange={(event) => setRepairParams((current) => ({ ...current,
+                          [key]: type === 'number' && event.target.value !== '' ? Number(event.target.value) : event.target.value }))} />
+                    )}
+                  </div>;
+                })}
+                <Button disabled={busy || repairMissingParams.length > 0} onClick={async () => {
+                  const saved = await runAction('保存动作参数', () =>
+                    api.patch(`/alternatives/${resolvedAction.alternativeId}/action-params`, {
+                      actionIndex: resolvedAction.actionIndex, params: repairParams,
+                    }).then(() => undefined));
+                  if (saved) {
+                    setRepairingAltId(null);
+                    setSelectedPhase('options');
+                    setInfo('参数已保存。请重新评分并记录决策，再提交审批。');
+                  }
+                }}>
+                  保存参数并返回评分
+                </Button>
+              </div>
+            )}
             {canDecide && state === 'OptionsReady' && (
               <Button
                 disabled={busy || !selectedAltIsSelectable || !selectedScore?.feasible}
@@ -1204,6 +1280,8 @@ export function CaseDetailPage() {
               <Button
                 variant="outline"
                 disabled={busy || !decisionReady || !currentDecision || !selectedScore?.feasible
+                  || !!actionSchemaError || (!!resolvedAction?.actionKey && actionSchema?.key !== resolvedAction.actionKey)
+                  || missingActionParams.length > 0
                   || (decision.alternativeId || decision.selectedAlternativeId) !== selectedAlt}
                 onClick={() =>
                   runAction('提交审批', () =>

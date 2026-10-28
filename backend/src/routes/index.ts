@@ -27,7 +27,7 @@ import {
 } from '../modules/sources/source-service';
 import {
   createCase, getCase, listCases, transitionCase, createAlternative,
-  updateAlternativeStatus, scoreAlternatives, recordDecision, requestApproval,
+  updateAlternativeStatus, updateAlternativeActionParams, scoreAlternatives, recordDecision, requestApproval,
   decideApproval, invalidateApprovals, listPendingApprovals, getDecisionType,
   listDecisionTypes, upsertDecisionType,
 } from '../modules/decision/decision-service';
@@ -710,6 +710,15 @@ apiRouter.post('/cases/:caseId/alternatives', requireAuth, asyncHandler((req, re
 }));
 
 apiRouter.use('/alternatives/:altId', requireAuth, guardResourceCase('alternative', 'altId'));
+
+apiRouter.patch('/alternatives/:altId/action-params', requireAuth, asyncHandler((req, res) => {
+  res.json(updateAlternativeActionParams({
+    alternativeId: req.params.altId,
+    actionIndex: req.body.actionIndex,
+    params: req.body.params,
+    actor: req.user!,
+  }));
+}));
 
 apiRouter.patch('/alternatives/:altId', requireAuth, asyncHandler((req, res) => {
   updateAlternativeStatus(req.params.altId, req.body.status, req.body.infeasibleReasons ?? [], req.user!);

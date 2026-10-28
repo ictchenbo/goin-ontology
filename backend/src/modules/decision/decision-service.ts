@@ -619,6 +619,46 @@ export function updateAlternativeStatus(
   return mapAlternative(db.prepare('SELECT * FROM alternative WHERE id = ?').get(alternativeId));
 }
 
+export function updateAlternativeActionParams(input: {
+  alternativeId: string;
+  actionIndex: number;
+  params: Record<string, unknown>;
+  actor: AuthUser;
+}) {
+  const db = getDb();
+  const alt = db.prepare('SELECT * FROM alternative WHERE id = ?').get(input.alternativeId) as any;
+  if (!alt) throw new AppError('NOT_FOUND', `备选不存在: ${input.alternativeId}`);
+  const c = db.prepare('SELECT * FROM decision_case WHERE id = ?').get(alt.case_id) as any;
+  if (!c) throw new AppError('NOT_FOUND', `案例不存在: ${alt.case_id}`);
+  const dt = getDecisionTypeForCase(alt.case_id);
+  requireRole(input.actor, dt.roleMatrix.propose ?? ['analyst']);
+  if (!['Oriented', 'OptionsReady'].includes(c.state)) {
+    throw new AppError('STATE_TRANSITION_INVALID', '仅可在方案阶段补全动作参数', { state: c.state });
+  }
+  if (!input.params || typeof input.params !== 'object' || Array.isArray(input.params)
+    || !Number.isInteger(input.actionIndex) || input.actionIndex < 0) {
+    throw new AppError('VALIDATION_ERROR', '动作参数或序号无效');
+  }
+  const proposedActions = JSON.parse(alt.proposed_actions || '[]') as Array<Record<string, unknown>>;
+  const proposed = proposedActions[input.actionIndex];
+  if (!proposed || typeof proposed.actionKey !== 'string' || !proposed.actionKey) {
+    throw new AppError('VALIDATION_ERROR', '拟议动作不存在');
+  }
+  proposedActions[input.actionIndex] = { ...proposed, params: input.params };
+  const lastScore = db.prepare('SELECT created_at FROM score_run WHERE case_id = ? ORDER BY created_at DESC LIMIT 1')
+    .get(alt.case_id) as { created_at: string } | undefined;
+  const updatedAt = new Date(Math.max(Date.now(), (Date.parse(lastScore?.created_at ?? '') || 0) + 1)).toISOString();
+  db.prepare(`UPDATE alternative SET proposed_actions = ?, status = 'draft',
+    infeasible_reasons = '[]', updated_at = ? WHERE id = ?`)
+    .run(JSON.stringify(proposedActions), updatedAt, input.alternativeId);
+  writeAudit({
+    actor: input.actor.username, eventType: 'alternative.action_params_updated', resourceType: 'alternative',
+    resourceId: input.alternativeId, before: { params: proposed.params ?? {} },
+    after: { actionIndex: input.actionIndex, params: input.params },
+  });
+  return mapAlternative(db.prepare('SELECT * FROM alternative WHERE id = ?').get(input.alternativeId));
+}
+
 export function getAlternative(altId: string) {
   const row = getDb().prepare('SELECT * FROM alternative WHERE id = ?').get(altId) as any;
   if (!row) throw new AppError('NOT_FOUND', `备选不存在: ${altId}`);
@@ -800,12 +840,18 @@ export function scoreAlternatives(input: ScoreInput) {
   const winner = ranking.find((r) => r.feasible) ?? null;
 
   const scoreRunId = newId('srun');
+  // 同一毫秒内补全参数并重新评分时，仍须保证新评分晚于方案修订。
+  const latestAlternativeTime = Math.max(...alts.map((alt) => Date.parse(alt.updated_at) || 0));
+  const previousScore = db.prepare('SELECT created_at FROM score_run WHERE case_id = ? ORDER BY created_at DESC LIMIT 1')
+    .get(input.caseId) as { created_at: string } | undefined;
+  const previousScoreTime = Date.parse(previousScore?.created_at ?? '') || 0;
+  const scoreCreatedAt = new Date(Math.max(Date.now(), latestAlternativeTime + 1, previousScoreTime + 1)).toISOString();
   db.prepare(`INSERT INTO score_run
     (id, case_id, scenario_run_id, weights_json, ranking_json, winner_alternative_id, created_by, created_at, facts_json)
     VALUES (?,?,?,?,?,?,?,?,?)`).run(
     scoreRunId, input.caseId, scenarioRunId,
     JSON.stringify({ raw: rawWeights, normalized: Object.fromEntries(Object.entries(rawWeights).map(([k, v]) => [k, v / totalWeight])) }),
-    JSON.stringify(ranking), winner?.alternativeId ?? null, input.actor.username, nowIso(),
+    JSON.stringify(ranking), winner?.alternativeId ?? null, input.actor.username, scoreCreatedAt,
     JSON.stringify({ snapshotId: snapshot.id, factsComplete, missingFacts, stale })
   );
 
